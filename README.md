@@ -18,7 +18,7 @@ PumpPortal (free: newToken, migration) ──► coverage + fallback ───�
                        survivor.py metrics ──► /api/* ──► dashboard (Next.js static, cùng origin)
 ```
 
-Một container `app` (FastAPI phục vụ cả API lẫn dashboard đã build tĩnh) + một container `redis`. Không CORS, không cần biết URL public trước khi build.
+Một container `pumphunt` (FastAPI phục vụ cả API lẫn dashboard đã build tĩnh) + một container `redis`. Không CORS, không cần biết URL public trước khi build.
 
 | Thành phần | File | Vai trò |
 |---|---|---|
@@ -69,7 +69,7 @@ Cấu trúc mô phỏng đúng [template của Bunny](https://github.com/jamie-a
 1. **Push lên `main`** → workflow build image `ghcr.io/<owner>/pumphunt:<sha>` và `:latest`.
 2. **Đặt package GHCR thành Public**: GitHub profile → Packages → `pumphunt` → Package settings → Change visibility → Public. (Bunny kéo image không có credential.)
 3. **Tạo app trên [dash.bunny.net](https://dash.bunny.net) → Magic Containers → Create App**:
-   - Container `app`: Registry *GitHub Container Registry*, image `ghcr.io/<owner>/pumphunt:latest`; **Endpoint** port `8080`; **Persistent Volume** mount `/data` (10 GB là dư cho scope `migrations`); env:
+   - Container `pumphunt` (tên này phải khớp `container:` trong `deploy.yml`): Registry *GitHub Container Registry*, image `ghcr.io/<owner>/pumphunt:latest`; **Endpoint** port `8080`; **Persistent Volume** mount `/data` (10 GB là dư cho scope `migrations`); env:
      - `PH_REDIS_URL=redis://localhost:6379`
      - `PH_DATA_DIR=/data`
      - `PH_CHAIN_SCOPE=migrations`

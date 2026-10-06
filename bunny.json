@@ -5,7 +5,7 @@
   "icon": "code",
   "containers": [
     {
-      "name": "app",
+      "name": "pumphunt",
       "imageNamespace": "ghcr.io",
       "imageName": "REPLACE_OWNER/pumphunt",
       "imageTag": "latest",

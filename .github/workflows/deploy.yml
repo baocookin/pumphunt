@@ -37,5 +37,5 @@ jobs:
         with:
           app_id: ${{ vars.APP_ID }}
           api_key: ${{ secrets.BUNNYNET_API_KEY }}
-          container: app
+          container: pumphunt # name of the container inside the Magic Containers app
           image_tag: ${{ github.sha }}
