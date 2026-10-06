@@ -1,8 +1,9 @@
-"""Recorder + harvester wired together with a fake GeckoTerminal; no network."""
+"""Recorder, RPC confirmation and harvester wired together with fakes; no network."""
 
 import asyncio
 
 import pytest
+from helpers import PK_A, PK_B, fake_migrate_tx, fake_pubkey
 
 from app.anchor import PUMP_PROGRAM, ChainEvent
 from app.config import Settings
@@ -11,6 +12,8 @@ from app.gecko import Candle
 from app.jsonl import read_jsonl
 from app.recorder import Recorder
 from app.store import MemoryStore, hour_key
+
+WA = fake_pubkey(777)
 
 
 class FakeGecko:
@@ -30,6 +33,25 @@ class FakeGecko:
     async def resolve_pool(self, mint):
         self.resolved.append(mint)
         return self.pools.get(mint)
+
+
+class FakeRpc:
+    def __init__(self, txs):
+        self.txs = txs
+        self.calls = 0
+
+    async def get_transaction(self, signature):
+        self.calls += 1
+        return self.txs.get(signature)
+
+
+class FakeFeed:
+    def __init__(self, notifications=0):
+        self.stats = {"notifications": notifications}
+        self.mentions = None
+
+    async def set_mentions(self, mentions):
+        self.mentions = list(mentions)
 
 
 @pytest.fixture
@@ -63,19 +85,19 @@ def mig(ts, mint="M1", pool="P1"):
     )
 
 
-def portal_mig(ts, mint="M1"):
+def portal_mig(ts, mint="M1", signature="psig"):
     return Event(
         ts=ts,
         tx_type="migrate",
         mint=mint,
         trader="",
-        signature="psig",
+        signature=signature,
         sol_amount=0,
         token_amount=0,
         v_sol=0,
         v_tokens=0,
         market_cap_sol=0,
-        raw={"txType": "migrate", "mint": mint},
+        raw={"txType": "migrate", "mint": mint, "signature": signature},
     )
 
 
@@ -83,6 +105,8 @@ def test_scope_controls_subscriptions(rec):
     assert rec.mentions() == [rec.cfg.migration_authority]
     rec.cfg.chain_scope = "full"
     assert rec.mentions() == [rec.cfg.migration_authority, PUMP_PROGRAM]
+    rec.learned_authority = WA
+    assert rec.mentions() == [WA, PUMP_PROGRAM]
 
 
 def test_counters_registry_and_compact_trade_log(rec):
@@ -96,9 +120,7 @@ def test_counters_registry_and_compact_trade_log(rec):
     assert rec.store.counters("creates_chain", [hour_key(t)]) == {hour_key(t): 1}
     assert rec.store.migration_count() == 1
     assert rec.counts["migrate"] == 2 and rec.counts["trade"] == 1
-    assert (
-        len(list(read_jsonl(rec.cfg.data_dir + "/migrations.jsonl"))) == 2
-    )  # every chain sighting is logged
+    assert len(list(read_jsonl(rec.cfg.data_dir + "/migrations.jsonl"))) == 2  # every sighting is logged
     rows = list(read_jsonl(rec.chain_log.path_for(t)))
     trade = next(r for r in rows if r["kind"] == "trade")
     assert trade["is_buy"] is True and "raw_b64" not in trade  # compact by default
@@ -107,7 +129,7 @@ def test_counters_registry_and_compact_trade_log(rec):
 
 def test_portal_migration_then_chain_fills_pool(rec):
     t = 1_700_000_000.0
-    rec.on_portal(portal_mig(t))
+    rec.on_portal(portal_mig(t))  # no running loop: RPC confirmation is skipped silently
     row = rec.store.migrations()[0]
     assert row["pool"] is None and row["source"] == "portal"
     rec.on_chain(mig(t + 2))
@@ -115,6 +137,45 @@ def test_portal_migration_then_chain_fills_pool(rec):
     assert row["pool"] == "P1" and row["slot"] == 100 and row["source"] == "chain"
     assert row["ts"] == t  # first sighting keeps its timestamp
     assert rec.store.migration_count() == 1
+
+
+def test_rpc_confirmation_fills_pool_and_learns_authority(rec):
+    t = 1_700_000_000.0
+    rec.rpc = FakeRpc({"sig1": fake_migrate_tx(PK_A, PK_B, WA, slot=4242)})
+    rec.feed = FakeFeed(notifications=0)
+    rec.on_portal(portal_mig(t, mint=PK_A, signature="sig1"))
+    assert asyncio.run(rec.confirm_migration("sig1", t, delays=(0,))) is True
+    row = rec.store.migrations()[0]
+    assert row["pool"] == PK_B and row["slot"] == 4242 and row["source"] == "rpc"
+    assert row["sol_amount"] == 85.0 and row["ts"] == t
+    assert rec.rpc_stats["confirmed"] == 1 and rec.rpc_stats["withdraw_authority"] == WA
+    # configured guess was wrong and the feed is silent -> re-subscribe to the learned address
+    assert rec.learned_authority == WA and rec.feed.mentions == [WA]
+    assert rec.store.counters("migrations_rpc", [hour_key(t)]) == {hour_key(t): 1}
+
+
+def test_rpc_confirmation_does_not_churn_a_working_feed(rec):
+    t = 1_700_000_000.0
+    rec.rpc = FakeRpc({"sig1": fake_migrate_tx(PK_A, PK_B, WA)})
+    rec.feed = FakeFeed(notifications=50)
+    assert asyncio.run(rec.confirm_migration("sig1", t, delays=(0,))) is True
+    assert rec.learned_authority is None and rec.feed.mentions is None
+
+
+def test_rpc_confirmation_skips_lookup_table_authority(rec):
+    t = 1_700_000_000.0
+    rec.rpc = FakeRpc({"sig1": fake_migrate_tx(PK_A, PK_B, WA, authority_in_lookup_table=True)})
+    rec.feed = FakeFeed(notifications=0)
+    assert asyncio.run(rec.confirm_migration("sig1", t, delays=(0,))) is True
+    assert rec.rpc_stats["authority_static"] is False
+    assert rec.learned_authority is None and rec.feed.mentions is None
+
+
+def test_rpc_confirmation_retries_then_gives_up(rec):
+    rec.rpc = FakeRpc({})
+    rec.feed = FakeFeed()
+    assert asyncio.run(rec.confirm_migration("missing", 1.0, delays=(0, 0))) is False
+    assert rec.rpc.calls == 2 and rec.rpc_stats["failed"] == 1
 
 
 def test_harvest_waits_then_computes(rec):

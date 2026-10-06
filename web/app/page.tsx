@@ -5,8 +5,13 @@ import { useEffect, useState } from "react";
 // Same origin by default (FastAPI serves this export); override for `next dev`.
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api`;
 
+type ChainFeed = { connected?: boolean; connects?: number; subscribed?: number; notifications?: number; events?: number; last_error?: string | null; mentions?: string[] };
+type Rpc = { confirmed?: number; failed?: number; no_event?: number; withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null };
 type Stats = {
-  status: { now?: number; last_chain_ts?: number; last_portal_ts?: number; counts?: Record<string, number> };
+  status: {
+    now?: number; last_chain_ts?: number; last_portal_ts?: number; counts?: Record<string, number>;
+    chain_feed?: ChainFeed | null; rpc?: Rpc | null; mentions?: string[];
+  };
   chain_scope: "migrations" | "full";
   creates_24h: number;
   creates_24h_chain: number;
@@ -64,6 +69,8 @@ export default function Page() {
   const portalOk = (stats?.status.last_portal_ts ?? 0) > now - 120;
   const verdict = sum?.verdict.status ?? "…";
   const full = stats?.chain_scope === "full";
+  const feed = stats?.status.chain_feed;
+  const rpc = stats?.status.rpc;
 
   return (
     <main>
@@ -80,6 +87,14 @@ export default function Page() {
         <div className="tile"><div className="k">Graduation / 24h (PumpPortal)</div><div className="v">{stats?.migrations_24h_portal ?? "–"}</div></div>
         <div className="tile"><div className="k">Đã harvest nến</div><div className="v">{sum?.harvested ?? 0} <span className="k">alive 24h {pct(sum?.alive_24h_rate, 0)}</span></div></div>
         <div className={`tile verdict ${verdict.toLowerCase()}`}><div className="k">Giả thuyết C (T+30m → 1h)</div><div className="v">{verdict}</div><div className="k">{sum?.verdict.why}</div></div>
+      </div>
+
+      <h2>Feed on‑chain</h2>
+      <div className="tiles">
+        <div className="tile"><div className="k">WebSocket</div><div className="v">{feed ? (feed.connected ? "connected" : "down") : "–"} <span className="k">· {feed?.connects ?? 0} lần nối · {feed?.subscribed ?? 0} sub</span></div><div className="k mono">{feed?.last_error ?? ""}</div></div>
+        <div className="tile"><div className="k">Notification / event decode</div><div className="v">{feed?.notifications ?? 0} <span className="k">/ {feed?.events ?? 0}</span></div></div>
+        <div className="tile"><div className="k">RPC confirm (portal → getTransaction)</div><div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event</span></div></div>
+        <div className="tile"><div className="k">withdraw_authority ({rpc?.migrate_ix ?? "?"})</div><div className="v mono" style={{ fontSize: 13 }}>{rpc?.withdraw_authority ?? "chưa học"}</div><div className="k">{rpc?.authority_static === false ? "nạp qua lookup table — không subscribe được" : `đang subscribe: ${(stats?.status.mentions ?? []).map(short).join(", ")}`}</div></div>
       </div>
 
       <h2>Return net (chi phí {cfg ? (cfg.cost_bps_round_trip / 100).toFixed(2) : "–"}% round‑trip) theo thời điểm vào × thời gian giữ</h2>

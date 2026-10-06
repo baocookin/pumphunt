@@ -19,15 +19,21 @@ class Settings(BaseSettings):
     # Primary feed: any Solana RPC websocket. Public endpoint works but rate-limits;
     # a free Helius key (wss://mainnet.helius-rpc.com/?api-key=...) is the sane default.
     solana_ws_url: str = "wss://api.mainnet-beta.solana.com"
+    # HTTP endpoint for getTransaction; derived from the websocket URL when unset.
+    solana_http_url: str | None = None
     chain_commitment: str = "confirmed"
-    # "migrations": subscribe only to transactions mentioning pump.fun's migration
+    # "migrations": subscribe only to transactions mentioning pump.fun's withdraw/migration
     #   authority (~1k tx/day, a few MB/day — fits any free RPC tier).
     # "full": also subscribe to the whole pump.fun program (every create/trade,
     #   5-15 GB/day of stream — needs a paid RPC plan and a big volume).
     chain_scope: Literal["migrations", "full"] = "migrations"
+    # Initial guess; the IDL does not fix this address, so the recorder learns the real one
+    # from confirmed migrate transactions and re-subscribes if it differs.
     migration_authority: str = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
     # In "full" scope, trades are logged as compact rows unless this is on.
     record_raw_trades: bool = False
+    # Confirm every PumpPortal migration with getTransaction (slot + pool from chain, 1 credit each).
+    rpc_confirm: bool = True
 
     # Secondary feed (coverage check + migration fallback). Free channels, no API key needed.
     pumpportal_enabled: bool = True

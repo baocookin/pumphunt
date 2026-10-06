@@ -25,6 +25,7 @@ Một container `app` (FastAPI phục vụ cả API lẫn dashboard đã build t
 | Decoder | `bot/app/anchor.py` | Decode `CreateEvent / TradeEvent / CompleteEvent / CompletePumpAmmMigrationEvent` từ log `Program data:`; discriminator + layout lấy từ IDL chính thức. Giữ raw base64 để decode lại sau. |
 | Chain feed | `bot/app/chain_feed.py` | `logsSubscribe` một subscription/địa chỉ, có **slot**, reconnect. |
 | Portal feed | `bot/app/feed.py` | Kênh miễn phí (`subscribeNewToken`, `subscribeMigration`): đếm coverage + nguồn migration dự phòng. |
+| RPC confirm | `bot/app/rpc.py` | Mỗi migration PumpPortal báo → `getTransaction(signature)` (1 credit) → decode event lấy **pool + slot** từ chain, đọc `withdraw_authority` thật từ instruction `migrate`/`migrate_v2` và tự re‑subscribe feed nếu địa chỉ đoán sai. |
 | Recorder | `bot/app/recorder.py` | Đếm theo giờ, registry migration (mint, pool, slot), JSONL xoay theo ngày. |
 | Harvester | `bot/app/gecko.py`, `recorder.py` | Sau 25h, kéo nến 1 phút 24h đầu của pool PumpSwap; tự tra pool theo mint nếu chỉ thấy qua PumpPortal. |
 | Metrics | `bot/app/survivor.py` | Return net theo (delay vào × thời gian giữ), max drawdown, độ cũ của giá thoát, volume buckets, lottery detector, **verdict đăng ký trước**. |
@@ -37,7 +38,7 @@ Một container `app` (FastAPI phục vụ cả API lẫn dashboard đã build t
 
 | Scope | Subscribe | Băng thông | Dùng khi |
 |---|---|---|---|
-| `migrations` (mặc định) | tx có nhắc tới migration authority `39azUYFW…` (~1,000 tx/ngày) | **vài MB/ngày** | Helius free (1M credit/tháng, 20 credit/MB), Bunny |
+| `migrations` (mặc định) | tx có nhắc tới `withdraw_authority` của pump.fun (~1,000 tx/ngày). IDL không cố định địa chỉ này nên bot **tự học** từ tx migrate đã xác nhận qua RPC; `PH_MIGRATION_AUTHORITY` chỉ là giá trị khởi đầu | **vài MB/ngày** | Helius free (1M credit/tháng, 20 credit/MB), Bunny |
 | `full` | thêm toàn bộ program pump.fun (mọi create/trade) | **5–15 GB/ngày** | chỉ khi có RPC trả phí + volume lớn; trade ghi dạng compact (`PH_RECORD_RAW_TRADES=true` để ghi đủ) |
 
 Giả thuyết C chỉ cần migration, nên mặc định là đủ. Số "token tạo mới" ở scope `migrations` lấy từ PumpPortal.
@@ -99,7 +100,13 @@ Chạy `python -m app.analyze data/survivor.jsonl --cost_bps 500` để xem kế
 * `migrations.jsonl` — một dòng/lần thấy graduation (nguồn chain hoặc portal; dòng chain có pool).
 * `survivor.jsonl` — một dòng/token đã harvest: cells return, mdd, `exit_stale_s`, volume, reserve.
 
-Đây là tài sản chính của repo. Đối chiếu đếm migration hàng giờ (chain vs PumpPortal, và với Dune `pumpdotfun_solana.pump_call_migrate`) trước khi tin bất kỳ con số nào.
+Đây là tài sản chính của repo. Đối chiếu đếm migration hàng giờ (chain vs PumpPortal vs RPC‑confirm, và với Dune `pumpdotfun_solana.pump_call_migrate`) trước khi tin bất kỳ con số nào.
+
+## Đọc trạng thái (`/api/stats` → `status`)
+
+* `chain_feed.connected / subscribed / notifications`: WebSocket đã nối, số subscription được RPC xác nhận, số notification nhận. `notifications = 0` kéo dài trong khi `counts.portal_migrate` tăng = địa chỉ đang subscribe không nằm trong tx migrate.
+* `rpc.confirmed / failed / no_event`: số migration PumpPortal được xác nhận on‑chain. `rpc.withdraw_authority` là địa chỉ thật đọc từ tx; `authority_static=false` nghĩa là nó được nạp qua address‑lookup‑table và `logsSubscribe` không thể theo dõi — khi đó đường RPC‑confirm là nguồn slot/pool chính, vẫn đủ cho giả thuyết C.
+* `mentions`: danh sách địa chỉ feed đang subscribe (sau khi tự học).
 
 ## Pháp lý (Việt Nam)
 
