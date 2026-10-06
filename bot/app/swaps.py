@@ -106,9 +106,18 @@ class SwapFetcher:
         """One getTransactionsForAddress page. A 413 (response too large for this provider)
         halves the page; a filter the provider rejects is switched off and the page retried."""
         while True:
+            # Helius answers -32602 to tokenTransfer at "confirmed"; harvest reads are a day old,
+            # long finalized either way
+            commitment = "finalized" if "tokenTransfer" in flt else "confirmed"
             try:
                 res = await self.rpc.get_transactions_for_address(
-                    pool, full=full, sort=sort, limit=limit, filters=flt, pagination_token=token
+                    pool,
+                    full=full,
+                    sort=sort,
+                    limit=limit,
+                    filters=flt,
+                    pagination_token=token,
+                    commitment=commitment,
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 413 and limit > 10:

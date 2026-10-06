@@ -222,16 +222,18 @@ class SolanaRpc:
         limit: int = 1000,
         filters: dict[str, Any] | None = None,
         pagination_token: str | None = None,
+        commitment: str = "confirmed",
     ) -> dict[str, Any]:
         """Helius `getTransactionsForAddress`: an address's history with time/status filters, oldest
         first if asked, full transactions included (no getTransaction round trips). Metered at
         10 credits per 100 full transactions (10 minimum) or 10 flat for signatures; not part of
-        standard Solana RPC, so other providers answer -32601 (RpcError.method_unsupported)."""
+        standard Solana RPC, so other providers answer -32601 (RpcError.method_unsupported).
+        Helius serves the `tokenTransfer` filter at `finalized` commitment only."""
         opts: dict[str, Any] = {
             "transactionDetails": "full" if full else "signatures",
             "sortOrder": sort,
             "limit": limit,
-            "commitment": "confirmed",
+            "commitment": commitment,
         }
         if full:
             opts["encoding"] = "json"
