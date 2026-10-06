@@ -10,6 +10,7 @@ import contextlib
 import csv
 import io
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
@@ -137,6 +138,19 @@ def files():
                 st = p.stat()
                 out.append({"name": p.name, "bytes": st.st_size, "mtime": st.st_mtime})
     return {"dir": str(d), "files": out}
+
+
+_DATA_FILE = re.compile(r"[a-z]+(-\d{4}-\d{2}-\d{2})?\.jsonl(\.gz)?")
+
+
+@api.get("/export/file/{name}")
+def export_file(name: str):
+    """One dataset file from the data volume, as listed by /files (swaps, holders, chain, ...)."""
+    path = Path(settings.data_dir) / name
+    if not _DATA_FILE.fullmatch(name) or not path.is_file():
+        return JSONResponse({"error": "no such data file"}, status_code=404)
+    media = "application/gzip" if name.endswith(".gz") else "application/x-ndjson"
+    return FileResponse(path, media_type=media, filename=name)
 
 
 def _jsonl(rows):
