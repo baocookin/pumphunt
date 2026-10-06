@@ -1,6 +1,7 @@
 """Recorder, RPC confirmation and harvester wired together with fakes; no network."""
 
 import asyncio
+import contextlib
 import time
 
 import httpx
@@ -667,10 +668,13 @@ def test_a_window_over_its_cap_still_yields_flow_and_states(rec):
     assert not sw["window"]["complete"] and sw["window"]["fetched"] == 100
     # the 5-minute windows before each entry fit their own cap and give the order flow
     assert sw["flow_windows"]["d5"]["complete"] and row["flow"]["d5"]["swaps"] == 1
-    # entry/exit states come from backwards scans past the noise; the first two times precede
-    # every swap, so their state is the first swap's pre-state
+    # entry/exit and decision states come from backwards scans past the noise; the decision and
+    # the entry at T+0 and the exit at T+1 min precede every swap: the first swap's pre-state
     st = sw["states"]
-    assert st["unresolved"] == 0 and st["resolved"] == 3 and st["before_first"] == 2
+    assert st["unresolved"] == 0 and st["resolved"] == 4 and st["before_first"] == 3
+    assert (
+        row["decision"]["d5"]["last_trade_age_s"] == 180 and row["decision"]["d0"]["last_trade_age_s"] is None
+    )
     cell = row["fills"]["d5_h5"]["1"]
     assert cell["model"] == "ghost" and cell["net_replay"] is None  # no complete window to replay
     assert rec.harvest_stats["window_incomplete"] == 1
@@ -763,11 +767,8 @@ def test_holder_snapshots_are_queued_for_tradeable_sol_pools_only(rec):
     rec.on_chain(_mig_event(1_000, "OK", "PO", quote_mint=WSOL, sol_amount_sol=85.0))
     rec.on_chain(_mig_event(1_000, "OK", "PO", quote_mint=WSOL, sol_amount_sol=85.0))  # seen again
     assert rec.store.queue_len("snap") == 2
-    lat = rec.cfg.fill_latency_s
-    assert rec.store.take_due("snap", 1e12, 10) == [
-        ("OK|PO|30", 1_000 + 1_800 + lat),
-        ("OK|PO|60", 1_000 + 3_600 + lat),
-    ]
+    # due at the decision times themselves: what a trader could see before acting
+    assert rec.store.take_due("snap", 1e12, 10) == [("OK|PO|30", 1_000 + 1_800), ("OK|PO|60", 1_000 + 3_600)]
 
 
 class BrokenHolderRpc:
@@ -799,10 +800,10 @@ def test_harvest_attaches_snapshots_curve_history_and_funders(rec):
     mint, curve, dev, b1, h1, funder = (fake_pubkey(n) for n in (9001, 9003, 11, 12, 15, 777))
     rec.on_chain(_mig_event(t_mig, mint, POOL, quote_mint=WSOL, sol_amount_sol=85.0, bonding_curve=curve))
 
-    # the live snapshot at T+5 min (+3 s latency), taken 10 s after it was due
+    # the live snapshot at the T+5 min decision, taken 10 s after it was due
     largest = [("vault", 6 * 10**14), ("a1", 3 * 10**13), ("a2", 10**13)]  # 1e15 supply, 6 decimals
     rec.rpc = HolderRpc(largest, {"vault": POOL, "a1": dev, "a2": h1}, 10**15)
-    now = t_mig + 300 + 3 + 10
+    now = t_mig + 300 + 10
     assert asyncio.run(rec.snapshot_once(now=now)) == 1 and rec.snapshot_stats["taken"] == 1
     assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "3"
     assert len(list(read_jsonl(rec.holders_log.path_for(now)))) == 1
@@ -837,3 +838,61 @@ def test_harvest_attaches_snapshots_curve_history_and_funders(rec):
     hs = rec.harvest_stats
     assert hs["features_rows"] == 1 and hs["funding_rows"] == 1 and hs["funding_lookups"] == 3
     assert rec.store.pop_doc("holders", f"{mint}|5") is None  # attached once, then gone
+
+
+# ---- loop supervision ----
+def test_a_stalled_loop_is_cancelled_and_restarted_and_shutdown_still_works(rec):
+    starts = []
+
+    async def hangs():
+        starts.append(time.time())
+        rec.beat("stuck")
+        await asyncio.Event().wait()  # an await that never returns: no exception to catch
+
+    async def scenario():
+        sup = asyncio.create_task(rec._supervise("stuck", hangs, restart_s=0, stall_s=10))
+        await asyncio.sleep(0.01)
+        assert len(starts) == 1 and rec.check_stalls(now=time.time() + 5) == []  # still fresh
+        assert rec.check_stalls(now=time.time() + 60) == ["stuck"]
+        await asyncio.sleep(0.05)
+        assert len(starts) == 2 and "stalled" in rec.task_errors["stuck"]["last"]
+        sup.cancel()  # shutdown: the supervisor and its loop both end
+        with contextlib.suppress(asyncio.CancelledError):
+            await sup
+        assert rec._loops["stuck"][0].cancelled()
+
+    asyncio.run(scenario())
+
+
+def test_funders_without_a_snapshot_use_the_curves_earliest_buyers(rec):
+    from fakehistory import HistoryRpc, Router, create_event, curve_tx, first_tx, trade_event
+
+    real = real_swaps()
+    t_mig = min(tx["blockTime"] for tx in real.values()) - 120
+    cfg = rec.cfg
+    cfg.entry_delays_min, cfg.horizons_min, cfg.fill_sizes_sol = [0, 5], [1, 5], [1]
+    cfg.fills_replay_cells = ["d0_h5", "d5_h5"]
+    cfg.holder_snapshot_delays_min = [5]
+    cfg.features_funding_min_real_sol = 0
+    mint, curve, dev, b1, e1 = (fake_pubkey(n) for n in (9001, 9003, 11, 12, 21))
+    rec.on_chain(_mig_event(t_mig, mint, POOL, quote_mint=WSOL, sol_amount_sol=85.0, bonding_curve=curve))
+    t_create = t_mig - 600
+    history = HistoryRpc(
+        {
+            curve: [
+                curve_tx(10, t_create, [create_event(t_create, mint, curve, dev)], idx=1, curve=curve),
+                curve_tx(10, t_create, [trade_event(b1, 5, True, t_create, mint, dev)], idx=2, curve=curve),
+                curve_tx(11, t_create + 1, [trade_event(e1, 1, True, t_create + 1, mint, dev)], curve=curve),
+            ],
+            dev: [first_tx(dev, e1, t_create - 50)],
+            e1: [first_tx(e1, fake_pubkey(777), t_create - 999_999)],
+        }
+    )
+    rec.fetcher = SwapFetcher(Router({POOL: FakeChain(list(real.values()))}, history), token_filter=False)
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
+    assert asyncio.run(rec.harvest_once(g, now=t_mig + 26 * 3600)) == 1  # no snapshot was ever taken
+    row = rec.store.survivor_rows()[0]
+    assert row["holders"] is None and row["curve"]["early_wallets"] == [b1, e1]
+    fu = row["funding"]
+    assert sorted(fu["funders"]) == sorted([dev, b1, e1]) and fu["looked"] == 3
+    assert fu["dev_linked"] == 1 and fu["cluster_hold_share"] == 0.0 and fu["dev_group_hold_share"] is None

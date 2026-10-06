@@ -110,8 +110,9 @@ class Settings(BaseSettings):
     features_curve: bool = True
     features_curve_count_cap: int = 5_000
     # At harvest: the oldest transaction (first funder) of the creator, the creation-slot bundle and
-    # the largest holders, 10 credits per wallet not in the 30-day cache; only for pools holding
-    # at least `features_funding_min_real_sol` real SOL at the first decision time.
+    # the largest holders (the curve's earliest buyers when no snapshot exists), 10 credits per
+    # wallet not in the 30-day cache; only for pools holding at least
+    # `features_funding_min_real_sol` real SOL at the first decision time.
     features_funding_wallets: int = 8
     features_funding_min_real_sol: float = 5
     features_funding_ttl_days: int = 30

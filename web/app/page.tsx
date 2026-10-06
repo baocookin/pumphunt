@@ -48,7 +48,10 @@ type Summary = {
   fills?: Record<string, Record<string, Cell>>; fill_primary_size?: string | null; verdict_fill?: { status: string; why: string };
   fill_models?: { net_ghost?: ModelStat; net_replay?: ModelStat; net_persist?: ModelStat; exit_capped_share?: number; replayed_share?: number };
   fill_strata?: { real_in_sol?: Stratum[]; idle_at_entry?: Stratum[] };
+  prereg?: Prereg;
 };
+type Hypothesis = { name: string; desc: string; since: number | null; eligible: number; members: number; n: number; median?: number | null; win_rate?: number | null; p10?: number | null; p90?: number | null; top2pct_share?: number | null; median_ci95?: [number, number] | null; verdict: { status: string; why: string } };
+type Prereg = { prereg_ts: number; explore_until: number; cell: string; size: string; c2: { min_real_sol: number; max_idle_s: number }; hypotheses: Hypothesis[] };
 type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number; fill_sizes_sol?: number[]; fills_daily_credits?: number };
 
 const pct = (v?: number | null, d = 1) => (v === undefined || v === null || !Number.isFinite(v) ? "–" : `${(v * 100).toFixed(d)}%`);
@@ -162,6 +165,25 @@ export default function Page() {
           })}
         </tbody>
       </table>
+
+      <h2>Giả thuyết đăng ký trước (chỉ dữ liệu sau thời điểm đăng ký mới được dùng để kiểm định)</h2>
+      <table>
+        <thead><tr><th>Giả thuyết</th><th>Tập con</th><th>từ</th><th>n</th><th>median net</th><th>KTC 95% median</th><th>thắng</th><th>top 2%</th><th>Kết luận</th></tr></thead>
+        <tbody>
+          {(sum?.prereg?.hypotheses ?? []).map((h) => (
+            <tr key={h.name}>
+              <td className="mono">{h.name}</td><td>{h.desc}</td>
+              <td>{h.since ? new Date(h.since * 1000).toISOString().slice(0, 16).replace("T", " ") : "đầu"}</td>
+              <td>{h.n ?? 0}{h.since ? ` / ${h.eligible}` : ""}</td>
+              <td className={cls(h.median ?? undefined)}>{signed(h.median ?? undefined)}</td>
+              <td>{h.median_ci95 ? `${signed(h.median_ci95[0])} … ${signed(h.median_ci95[1])}` : "–"}</td>
+              <td>{pct(h.win_rate, 0)}</td><td>{pct(h.top2pct_share, 0)}</td>
+              <td className="mono">{h.verdict?.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="k">{sum?.prereg ? `Ô ${sum.prereg.cell}, ${sum.prereg.size} SOL, net khớp lệnh thật. C2: ≥ ${sum.prereg.c2.min_real_sol} SOL thật trong pool và có swap trong ${sum.prereg.c2.max_idle_s} giây trước lúc quyết định (đo đúng T+30, chưa tính độ trễ). Luật dựa trên đặc trưng chỉ được chọn trên dữ liệu tới ${new Date(sum.prereg.explore_until * 1000).toISOString().slice(0, 10)}, rồi kiểm định trên dữ liệu sau khi đăng ký luật. Chi tiết: docs/PREREG.md.` : ""}</p>
 
       <h2>Ba cách tính thực thi cho ô quyết định ({primarySize} SOL, T+30m → 1h)</h2>
       <table>
