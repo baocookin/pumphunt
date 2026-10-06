@@ -217,14 +217,37 @@ def test_real_launch_simulation():
 
 
 # ---- summary and verdict ----
-def _res(mint, t0, primary, k1=None, k4=None, mayhem=False):
+def _sigs(per_10k, n, lo=0):
+    """n signatures inside the census sample `per_10k` and outside the one at `lo`."""
+    out, i = [], 0
+    while len(out) < n:
+        sig = f"sig{i}"
+        if sampled(sig, per_10k) and not (lo and sampled(sig, lo)):
+            out.append(sig)
+        i += 1
+    return out
+
+
+S2 = _sigs(200, MIN_N + 5)  # in S's registered 2%
+
+
+def _res(mint, t0, primary, k1=None, k4=None, mayhem=False, signature=None):
     nets = [None] * len(CELLS)
     idx = {n: i for i, n in enumerate(CELLS)}
     nets[idx[PRIMARY_CELL]] = primary
     nets[idx[cell_name(1, "p")]] = primary if k1 is None else k1
     nets[idx[cell_name(4, "p")]] = primary if k4 is None else k4
     whys = "".join("x" if v is not None else "-" for v in nets)
-    return {"mint": mint, "t0": t0, "mayhem": mayhem, "sim_version": SIM_VERSION, "nets": nets, "whys": whys}
+    sig = signature or S2[0]
+    return {
+        "mint": mint,
+        "signature": sig,
+        "t0": t0,
+        "mayhem": mayhem,
+        "sim_version": SIM_VERSION,
+        "nets": nets,
+        "whys": whys,
+    }
 
 
 def test_verdict_rules():
@@ -238,15 +261,17 @@ def test_verdict_rules():
 
 
 def test_summary_counts_each_launch_once_and_splits_the_samples():
-    rows = [_res(f"m{i}", PREREG_S_TS + i, -0.1 if i % 2 else 0.05) for i in range(MIN_N)]
+    rows = [_res(f"m{i}", PREREG_S_TS + i, -0.1 if i % 2 else 0.05, signature=S2[i]) for i in range(MIN_N)]
     rows += [_res("old", PREREG_S_TS - 10, 5.0), _res("may", PREREG_S_TS + 5, 1.0, mayhem=True)]
-    rows += [_res("m0", PREREG_S_TS, 0.05)]  # read twice: counted once
+    rows += [_res("m0", PREREG_S_TS, 0.05, signature=S2[0])]  # read twice: counted once
     rows += [dict(_res("v0", PREREG_S_TS, 9.0), sim_version=SIM_VERSION - 1)]  # stale simulation
+    wider = _sigs(500, 3, lo=200)  # in the 5% census, outside S's registered 2%
+    rows += [_res(f"w{i}", PREREG_S_TS + 9, 7.0, signature=sig) for i, sig in enumerate(wider)]
     out = summarize(rows)
     pr = out["prereg"]
-    assert out["classic"] == MIN_N + 1 and out["mayhem"] == 1
+    assert out["classic"] == MIN_N + 4 and out["mayhem"] == 1
     assert pr["n"] == MIN_N and pr["mean"] == pytest.approx(-0.025) and pr["verdict"] == "KILL"
-    assert out["cells"]["classic"][PRIMARY_CELL]["n"] == MIN_N + 1  # the whole sample, exploratory
+    assert out["cells"]["classic"][PRIMARY_CELL]["n"] == MIN_N + 4  # the whole census, exploratory
     assert out["cells"]["mayhem"][PRIMARY_CELL]["n"] == 1
     assert set(pr["robust"]) == {cell_name(1, "p"), cell_name(4, "p")}
     assert set(out["grid"]["exits"]) == set(EXITS)

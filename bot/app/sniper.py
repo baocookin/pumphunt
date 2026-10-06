@@ -51,6 +51,9 @@ SIM_VERSION = 1
 PREREG_S_TS = 1_791_342_000  # 2026-10-07T03:00:00Z
 EXPLORE_DAYS = 14
 MIN_N = 2_000
+# S's sample is the 2% of the census registered with it; the census keeps more since G (5%),
+# a superset by the same hash, which the exploratory grid uses in full.
+S_SAMPLE_PER_10K = 200
 
 # --- simulation grid -------------------------------------------------------------------------
 LATENCIES = (0, 1, 2, 4, 8, 20, 40)  # slots after the create slot (~0.27 s each, measured)
@@ -301,6 +304,8 @@ def simulate_row(row: dict[str, Any]) -> dict[str, Any] | None:
             nets.append(None if r["net"] is None else round(r["net"], 5))
             whys.append(REASONS.get(r["why"], "u"))
     held = simulate(p, PRIMARY_K, "hold")
+    from .graduation import phases  # imports this module
+
     return {
         "mint": row["mint"],
         "signature": row["signature"],
@@ -314,6 +319,7 @@ def simulate_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "whys": "".join(whys),
         "hold_peak": round(held["peak"], 4) if held else None,
         "entry": entry_features(p, row),
+        "g": None if row.get("mayhem") else phases(p),
     }
 
 
@@ -374,7 +380,11 @@ def summarize(results: Sequence[dict[str, Any]], now: float | None = None) -> di
             st = _stats(cell_vals(rs, i))
             st["unresolved"] = sum(1 for r in rs if r["whys"][i] == "u")
             cells[stratum][name] = st
-    conf = [r for r in by["classic"] if r["t0"] >= PREREG_S_TS]
+    conf = [
+        r
+        for r in by["classic"]
+        if r["t0"] >= PREREG_S_TS and sampled(r.get("signature") or "", S_SAMPLE_PER_10K)
+    ]
     idx = {n: i for i, n in enumerate(CELLS)}
     st = _stats(cell_vals(conf, idx[PRIMARY_CELL]))
     st["unresolved"] = sum(1 for r in conf if r["whys"][idx[PRIMARY_CELL]] == "u")
@@ -468,6 +478,8 @@ class SniperRecorder:
             "paused": False,
             "gtfa": None,
             "gtfa_error": None,
+            "short_then_empty": 0,  # a page shorter than asked, then an empty one: the usual end
+            "short_then_more": 0,  # a page shorter than asked, then more data: never seen so far
             "queued": 0,
             "last_poll_ts": 0.0,
             "last_harvest_ts": 0.0,
@@ -539,17 +551,25 @@ class SniperRecorder:
         txs: list[dict[str, Any]] = []
         token = None
         t_to = row["create_ts"] + cfg.sniper_window_s
+        short = False  # the previous page held fewer than asked
         while True:
+            limit = 100 if not txs else 1000
             res = await f.history_page(
                 row["curve"],
                 full=True,
                 sort="asc",
-                limit=100 if not txs else 1000,
+                limit=limit,
                 t_from=row["create_ts"],
                 t_to=t_to,
                 token=token,
             )
             data = res.get("data") or []
+            # Helius hands out a pagination token even after the last page (measured: 920 of 920
+            # curve reads). Whether a short page is always the last one decides if that extra
+            # call can be skipped; until it is shown, the read goes on and counts the cases.
+            if short:
+                self.stats["short_then_more" if data else "short_then_empty"] += 1
+            short = len(data) < limit
             txs.extend(data)
             token = res.get("paginationToken")
             if not token or not data or len(txs) >= cfg.sniper_max_tx:

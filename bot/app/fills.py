@@ -266,6 +266,8 @@ def simulate_cell(
         "impact_in": (budget_lamports - fees_in) / s_in.effective if s_in.effective else None,
         "liquidity_in_sol": s_in.liquidity_sol,
         "real_in_sol": s_in.real_sol,
+        "base_in": s_in.base,  # with the line above: the pool at entry, before our buy
+        "pool_fees_bps": [s_in.lp_bps, s_in.protocol_bps, s_in.creator_bps],
         "virtual_in_sol": s_in.virtual / LAMPORTS,
         "real_out_sol": s_out.real_sol,
         "liquidity_out_sol": s_out.liquidity_sol,

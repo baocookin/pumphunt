@@ -94,9 +94,9 @@ class Settings(BaseSettings):
     # RPC credits all research reads (fills, curve history, holders, funding) may spend per UTC
     # day; the harvester pauses until the next day once reached. Measured: ~90 credits per token
     # on average (06/10/2026), ~1,200 graduates a day; the cap binds only while a backlog drains.
-    # With the sniper sample's 30k this is 300k/day at most, ~9M/month, inside the Developer
+    # With the sniper sample's 90k this is 300k/day at most, ~9M/month, inside the Developer
     # plan's 10M with room for the recorder itself (~5k/day).
-    fills_daily_credits: int = 270_000
+    fills_daily_credits: int = 210_000
     fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction
@@ -126,12 +126,14 @@ class Settings(BaseSettings):
     # 100). 57-76k launches a day; 2% is ~1,100-1,500 launches. A busy curve costs ~140 credits
     # (1,200 transactions, measured), a quiet one 11.
     sniper_enabled: bool = True
-    sniper_sample_per_10k: int = 200
+    # 5% since hypothesis G (curves that reach 50-70 SOL are ~3% of launches); S tests its
+    # registered 2%, the same hash's lower part
+    sniper_sample_per_10k: int = 500
     # of the graduations a sniper can enter (dev buy < 85 SOL), 92% happen within 1 h, 95% within 2 h
     sniper_window_s: int = 7_200
     sniper_delay_s: int = 300  # read this long after the window closed (finalized, indexed)
     sniper_max_tx: int = 5_000  # transactions read per curve at most (500 credits)
-    sniper_daily_credits: int = 30_000
+    sniper_daily_credits: int = 90_000
     sniper_census_max_pages: int = 30  # after a restart: up to ~12 h of launches listed again
     sniper_poll_s: float = 60
     sniper_batch: int = 20

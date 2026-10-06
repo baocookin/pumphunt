@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .explore import explore_c, explore_s
 from .fills import size_key
+from .graduation import summarize as graduation_summarize
 from .prereg import evaluate
 from .recorder import Recorder
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
@@ -173,6 +174,13 @@ def survivor_explore():
 def sniper_explore():
     """The same for sniper tickets (rules S2 onward), by what was public at the entry slot."""
     return _cached("s", 60, lambda: explore_s(store.rows("sniper")))
+
+
+@api.get("/graduation/summary")
+def graduation_summary():
+    """Hypothesis G (docs/SNIPER.md section 8): tickets bought once a curve stood at 50/60/70 SOL,
+    sold 3 s or 5 min after the migration, and the pre-registered verdict."""
+    return _cached("g", 120, lambda: graduation_summarize(store.rows("sniper"), store.survivor_rows()))
 
 
 @api.get("/sniper/rows")

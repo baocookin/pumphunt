@@ -68,6 +68,9 @@ type Bucket = { range: [number | null, number | null]; n: number; median?: numbe
 type ExploreSample = { all: { n: number; median?: number; mean?: number; win?: number; rug?: number }; features: Record<string, { n: number; buckets: Bucket[] | null }> };
 type ExploreC = { population: string; cell: string; window: [number, number]; samples: Record<string, ExploreSample> };
 type ExploreS = { window: [number, number]; cells: string[]; samples: Record<string, Record<string, ExploreSample>> };
+type GCell = { n: number; mean?: number; mean_ci95?: [number, number] | null; median?: number; win_rate?: number; rug_share?: number };
+type GLevel = { reached: number; grad: number; fail: number; jump: number; unresolved: number; exit_waiting: number; p_grad_given_ticket: number | null; cells: Record<string, GCell> };
+type Graduation = { levels: Record<string, GLevel>; prereg: GCell & { since: number; level: number; exit: string; min_n: number; robust_means: (number | null)[]; verdict: string } };
 
 const num = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(2) : v.toPrecision(2));
 const rangeLabel = ([lo, hi]: [number | null, number | null]) =>
@@ -117,6 +120,7 @@ export default function Page() {
   const [exC, setExC] = useState<ExploreC | null>(null);
   const [exS, setExS] = useState<ExploreS | null>(null);
   const [exSample, setExSample] = useState<"window" | "before">("window");
+  const [grad, setGrad] = useState<Graduation | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -135,6 +139,7 @@ export default function Page() {
         fetch(`${API}/sniper/summary`).then((r) => r.json()).then((x) => { if (alive) setSn(x); }).catch(() => {});
         fetch(`${API}/survivor/explore`).then((r) => r.json()).then((x) => { if (alive) setExC(x); }).catch(() => {});
         fetch(`${API}/sniper/explore`).then((r) => r.json()).then((x) => { if (alive) setExS(x); }).catch(() => {});
+        fetch(`${API}/graduation/summary`).then((r) => r.json()).then((x) => { if (alive) setGrad(x); }).catch(() => {});
       } catch (e) {
         if (alive) setErr(`Không kết nối được API tại ${API}: ${String(e)}`);
       }
@@ -311,6 +316,30 @@ export default function Page() {
         </tbody>
       </table>
       <p className="k">EV là lãi/lỗ trung bình mỗi vé sau phí 1.25% mỗi chiều và 0.002 SOL phí ưu tiên/tip; slot ≈ 0.27 giây. p = chốt x2 / cắt 50% / bán sau 60 giây; tpN = chốt xN, nếu không thì giữ tới tốt nghiệp hoặc hết cửa sổ 2 giờ; tN = bán sau N giây; hold = giữ.</p>
+
+      <h2>Graduation run: mua khi curve đã ở ≥ X SOL, bán 3 giây sau migration (giả thuyết G, docs/SNIPER.md mục 8)</h2>
+      <div className="tiles">
+        <div className={`tile verdict ${(grad?.prereg.verdict ?? "").toLowerCase()}`}>
+          <div className="k">{`G: vào khi curve chạm ${grad?.prereg.level ?? 60} SOL, 0,5 SOL, bán 3 giây sau migration · launch classic từ ${grad ? new Date(grad.prereg.since * 1000).toISOString().slice(0, 16).replace("T", " ") : "…"}`}</div>
+          <div className="v">{grad?.prereg.verdict ?? "…"}</div>
+          <div className="k">{`n=${grad?.prereg.n ?? 0} / ${grad?.prereg.min_n ?? 300} · EV ${signed(grad?.prereg.mean)}${grad?.prereg.mean_ci95 ? ` (KTC 95% ${signed(grad.prereg.mean_ci95[0])} … ${signed(grad.prereg.mean_ci95[1])})` : ""} · thắng ${pct(grad?.prereg.win_rate, 0)} · mất gần hết ${pct(grad?.prereg.rug_share, 0)}`}</div>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Mức kích hoạt</th><th>chạm</th><th>có vé (tốt nghiệp / thất bại)</th><th>nhảy qua, không vào kịp</th><th>P(tốt nghiệp | có vé)</th><th>bán 3 giây sau migration</th><th>bán 5 phút sau</th></tr></thead>
+        <tbody>
+          {Object.entries(grad?.levels ?? {}).map(([lv, g]) => (
+            <tr key={lv}>
+              <td>{lv} SOL</td><td>{g.reached}</td><td>{g.grad} / {g.fail}{g.exit_waiting ? ` (${g.exit_waiting} chờ pool)` : ""}</td>
+              <td>{g.jump}</td><td>{pct(g.p_grad_given_ticket, 0)}</td>
+              {(["t3s", "t5m"] as const).map((w) => {
+                const c = g.cells[w];
+                return <td key={w}>{c && c.n > 0 ? <>EV <span className={cls(c.mean)}>{signed(c.mean)}</span> · med {signed(c.median)} · wr {pct(c.win_rate, 0)} · n={c.n}</> : <span className="k">n=0</span>}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <h2>Thăm dò luật đặc trưng (nơi tìm luật, KHÔNG phải kiểm định)</h2>
       <p className="k">
