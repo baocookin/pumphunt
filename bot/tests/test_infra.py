@@ -70,7 +70,8 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
 
     importlib.reload(api_mod)
     with TestClient(api_mod.app) as c:
-        assert c.get("/api/health").json()["ok"] is True
+        health = c.get("/api/health").json()
+        assert health["ok"] is True and health["build_sha"] == "dev"
         assert c.get("/api/stats").json()["chain_scope"] == "migrations"
         assert c.get("/api/survivor/summary").json()["verdict"]["status"] == "INSUFFICIENT"
         assert "dash" in c.get("/").text

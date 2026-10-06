@@ -12,6 +12,8 @@ COPY bot/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY bot/app ./app
 COPY --from=web /web/out ./static
-ENV PH_STATIC_DIR=/app/static PH_DATA_DIR=/data
+# Stamped by the deploy workflow so /api/health says which commit is running.
+ARG BUILD_SHA=dev
+ENV PH_STATIC_DIR=/app/static PH_DATA_DIR=/data PH_BUILD_SHA=$BUILD_SHA
 EXPOSE 8080
 CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8080"]

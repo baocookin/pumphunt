@@ -67,6 +67,7 @@ class Recorder:
             "confirmed": 0,
             "failed": 0,
             "no_event": 0,
+            "last_rpc_ts": 0.0,
             "withdraw_authority": None,
             "authority_static": None,
             "migrate_ix": None,
@@ -200,6 +201,7 @@ class Recorder:
             self.migrations.write(row)
             self.store.incr("migrations_rpc", hour_key(seen_ts))
         self.rpc_stats["confirmed"] += 1
+        self.rpc_stats["last_rpc_ts"] = time.time()
         await self._learn_authority(info.get("accounts"))
         return True
 
