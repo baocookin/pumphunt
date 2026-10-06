@@ -541,6 +541,7 @@ class Recorder:
                     self.cfg.solana_http_url or http_url_from_ws(self.cfg.solana_ws_url),
                     rps=self.cfg.rpc_rps,
                     penalty_s=self.cfg.rpc_429_penalty_s,
+                    max_tx_version=self.cfg.rpc_max_tx_version,
                 )
             print(f"[recorder] {self.prime_claims()} confirmed rows already in the registry")
             tasks = [self.run_chain(), self.run_status()]

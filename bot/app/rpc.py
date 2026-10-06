@@ -110,9 +110,19 @@ class SolanaRpc:
     callers, and a 429 pushes every caller back by `penalty_s`. Helius' free tier allows ~10/s;
     a backfill of a few hundred getTransaction calls must not trip it."""
 
-    def __init__(self, client: httpx.AsyncClient, url: str, rps: float = 5.0, penalty_s: float = 2.0):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        rps: float = 5.0,
+        penalty_s: float = 2.0,
+        max_tx_version: int = 255,
+    ):
         self.c = client
         self.url = url
+        # Solana now has version-1 transactions; asking for at most version 0 makes the RPC
+        # answer null (json) or an error (jsonParsed) for them, which looked like "not found".
+        self.max_tx_version = max_tx_version
         self.interval = 1.0 / rps if rps > 0 else 0.0
         self.penalty_s = penalty_s
         self._next = 0.0
@@ -140,7 +150,11 @@ class SolanaRpc:
         return r.json().get("result")
 
     async def get_transaction(self, signature: str) -> dict[str, Any] | None:
-        opts = {"encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0}
+        opts = {
+            "encoding": "json",
+            "commitment": "confirmed",
+            "maxSupportedTransactionVersion": self.max_tx_version,
+        }
         return await self._call("getTransaction", [signature, opts])
 
     async def get_signatures(
@@ -299,6 +313,7 @@ def tx_diagnostics(tx: dict[str, Any] | None) -> dict[str, Any]:
                 continue
     return {
         "found": True,
+        "version": tx.get("version"),
         "slot": tx.get("slot"),
         "err": meta.get("err"),
         "n_keys": len(keys),

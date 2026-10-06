@@ -53,6 +53,13 @@ def test_get_signatures_request_shape_and_empty_result():
     c.result = [{"signature": "s1", "err": None, "blockTime": 5}]
     assert asyncio.run(rpc.get_signatures("ADDR"))[0]["signature"] == "s1"
     assert c.calls[-1][1]["params"][1] == {"limit": 1000, "commitment": "confirmed"}
+    # getTransaction must accept every transaction version, v1 included
+    c.result = {"slot": 1}
+    assert asyncio.run(rpc.get_transaction("SIG")) == {"slot": 1}
+    assert c.calls[-1][1]["params"] == [
+        "SIG",
+        {"encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 255},
+    ]
 
 
 def test_http_url_from_ws():

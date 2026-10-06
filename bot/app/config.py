@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     rpc_concurrency: int = 4  # parallel getTransaction calls
     rpc_rps: float = 5  # global request pace; Helius free tier allows ~10/s and 429s above it
     rpc_429_penalty_s: float = 2  # every caller backs off this long after a 429
+    # Highest transaction version to accept from getTransaction. v1 txs exist on mainnet (2026);
+    # 0 made the RPC return null for them. Any u8 is accepted, so ask for everything.
+    rpc_max_tx_version: int = 255
     retry_max_attempts: int = 6  # a tx whose fetch failed is retried on later polls this many times
     retry_batch: int = 50  # failed fetches re-queued per poll
 
