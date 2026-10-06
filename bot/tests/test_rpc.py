@@ -211,7 +211,12 @@ def test_rpc_client_paces_requests_and_backs_off_on_429():
     spaced, after_429, stats = asyncio.run(run())
     assert spaced >= 0.045  # second request waited for its slot at 20 rps
     assert after_429 >= 0.25  # the 429 penalty held the next request back
-    assert stats == {"calls": 7, "rate_limited": 4, "errors": 1}  # 3 retries inside _call, then raised
+    assert {k: stats[k] for k in ("calls", "rate_limited", "errors")} == {
+        "calls": 7,
+        "rate_limited": 4,
+        "errors": 1,
+    }
+    assert stats["credits_est"] == 3  # only answered calls are metered  # 3 retries inside _call, then raised
 
 
 def test_tx_diagnostics_names_what_is_there():

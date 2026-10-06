@@ -1,74 +1,208 @@
-"""SwapFetcher selection and paging against a fake RPC."""
+"""SwapFetcher: windows, states at decision times, the tokenTransfer filter, the fallback."""
 
 import asyncio
 import json
 from pathlib import Path
 
-from app.swaps import SwapFetcher
+import pytest
+from fakechain import MINT, POOL, FakeChain, noise, real_swaps
 
-FIX = Path(__file__).parent / "fixtures" / "pumpswap"
+from app.fills import state_at
+from app.pumpswap import swaps_from_tx
+from app.rpc import RpcError, gtfa_credits
+from app.swaps import SwapFetcher, chain_breaks, encode_swaps, merge_swaps
 
-
-class FakeRpc:
-    def __init__(self, sigs_newest_first, txs):
-        self.sigs = sigs_newest_first
-        self.txs = txs
-        self.sig_calls = []
-        self.tx_calls = []
-
-    async def get_signatures(self, address, limit=1000, before=None, until=None):
-        self.sig_calls.append((address, limit, before))
-        start = 0
-        if before:
-            start = next(i for i, s in enumerate(self.sigs) if s["signature"] == before) + 1
-        return self.sigs[start : start + limit]
-
-    async def get_transaction(self, signature):
-        self.tx_calls.append(signature)
-        return self.txs.get(signature)
+CHAIN = Path(__file__).parent / "fixtures" / "pumpswap_chain"
 
 
-def sig(s, bt, err=None):
-    return {"signature": s, "blockTime": bt, "slot": bt, "err": err}
+def times_of(real):
+    return sorted(tx["blockTime"] for tx in real.values())
 
 
-def test_select_takes_the_full_window_then_one_tx_per_later_point():
-    sigs = [sig(f"s{i}", 100 + i * 10) for i in range(20)]  # oldest first, 100..290
-    chosen = SwapFetcher.select(sigs, full_until=150, max_full=100, point_times=[205, 207, 1000])
-    assert [s["signature"] for s in chosen] == ["s0", "s1", "s2", "s3", "s4", "s5", "s10", "s19"]
-    # the cap keeps the earliest transactions (the entry side of every cell)
-    capped = SwapFetcher.select(sigs, full_until=150, max_full=3, point_times=[])
-    assert [s["signature"] for s in capped] == ["s0", "s1", "s2"]
-    # a decision time inside a capped window still gets the transaction that fixes its state
-    capped_pt = SwapFetcher.select(sigs, full_until=150, max_full=3, point_times=[145])
-    assert [s["signature"] for s in capped_pt] == ["s0", "s1", "s2", "s4"]
-    assert SwapFetcher.select(sigs, full_until=50, max_full=3, point_times=[90]) == []  # nothing that early
+def run(coro):
+    return asyncio.run(coro)
 
 
-def test_fetch_pages_back_to_the_pool_creation_and_decodes_only_this_pool():
-    real = {p.stem: json.loads(p.read_text()) for p in sorted(FIX.glob("*.json"))}
-    pool = "F4WJkbXMz8C6GXGeymcKQpXaVkUMdyrqLHc7buEUMRJp"
-    t = {k: v["blockTime"] for k, v in real.items()}
-    # newest first like the RPC; two pages of 1000 would be needed if there were that many; here 4 + noise
-    sigs = [sig("newer-noise", max(t.values()) + 100)] + [
-        sig(k, t[k]) for k in sorted(t, key=lambda k: -t[k])
-    ]
-    sigs += [sig("failed", t["BuyEvent_3"] - 1, err={"x": 1}), sig("older-than-pool", t["BuyEvent_3"] - 5000)]
-    rpc = FakeRpc(sigs, dict(real))
-    f = SwapFetcher(rpc, max_pages=5)
-    t0 = t["BuyEvent_3"] - 10
-    swaps, st = asyncio.run(f.fetch(pool, t0, full_until=t0 + 100_000, max_full=100, point_times=[]))
-    assert (
-        st["pages"] == 1 and st["listed"] == 5 and st["fetched"] == 5 and st["missing"] == 1
-    )  # newer-noise has no tx
-    assert [s.side for s in swaps] == ["buy", "sell", "buy", "sell"] and st["swaps"] == 4
-    assert "failed" not in rpc.tx_calls and "older-than-pool" not in rpc.tx_calls
-    assert st["credits"] == 6 and st["window_truncated"] is False
+def test_a_quiet_window_is_settled_by_one_page():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()))
+    f = SwapFetcher(chain, token_filter=False)
+    swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, max_tx=1000))
+    assert f.gtfa is True and st["method"] == "gtfa" and st["complete"] and st["covered_to"] == ts[-1] + 10
+    assert [s.side for s in swaps] == ["buy", "sell", "buy", "sell"] and st["fetched"] == 4
+    assert [s.order for s in swaps] == sorted(s.order for s in swaps) and swaps[0].coin_creator
+    assert st["credits"] == f.credits == 10 and len(chain.calls) == 1
+    assert chain.calls[0]["limit"] == 100 and chain.calls[0]["bt"] == {"gte": ts[0] - 10, "lte": ts[-1] + 10}
+    assert chain.tx_calls == []  # no getTransaction round trips
 
 
-def test_fetch_stops_paging_at_max_pages():
-    sigs = [sig(f"s{i}", 10_000 - i) for i in range(2500)]
-    rpc = FakeRpc(sigs, {})
-    f = SwapFetcher(rpc, max_pages=2)
-    got, pages = asyncio.run(f.signatures_since("P", 0))
-    assert pages == 2 and len(got) == 2000 and got[0]["signature"] == "s1999"
+def test_noise_that_fits_is_counted_then_fetched_whole():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(300, ts[0] - 5, ts[-1] + 5))
+    f = SwapFetcher(chain, token_filter=False)
+    swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, max_tx=1000))
+    assert st["complete"] and st["fetched"] == 304 and len(swaps) == 4
+    assert [c["full"] for c in chain.calls] == [True, False, True]  # first page, count, the rest
+    assert st["counted"] >= 304 and st["credits"] == 10 + 10 + gtfa_credits(204)
+
+
+def test_a_window_over_its_cap_stops_after_the_count():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(2500, ts[0] - 5, ts[-1] + 5))
+    f = SwapFetcher(chain, token_filter=False)
+    swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, max_tx=1000))
+    assert not st["complete"] and st["fetched"] == 100 and st["counted"] > 1000
+    assert st["credits"] == 20 and [c["full"] for c in chain.calls] == [True, False]
+    first_page_last = chain.txs[99]["blockTime"]
+    assert st["covered_to"] == first_page_last - 1  # that second may continue on the next page
+
+
+def test_the_token_filter_is_used_only_once_verified():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(50, ts[0] - 5, ts[-1] + 5), token_filter="honour")
+    f = SwapFetcher(chain)
+    assert f.token_filter is None
+    for _ in range(2):  # unverified: the window is read unfiltered and compared with a filtered page
+        swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))
+        assert not st["filtered"] and st["fetched"] == 54 and len(swaps) == 4
+    assert f.token_filter is True and f.filter_checks["reduced"] == 2 and "verified" in f.filter_note
+    chain.calls.clear()
+    swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))
+    assert st["filtered"] and st["fetched"] == 4 and len(swaps) == 4 and st["complete"]
+    assert len(chain.calls) == 1 and chain.calls[0]["filtered"]
+
+
+@pytest.mark.parametrize(
+    "mode, windows, note",
+    [("ignore", 3, "ignored"), ("drop", 1, "dropped"), ("reject", 1, "rejected")],
+)
+def test_a_filter_the_provider_ignores_breaks_or_rejects_is_switched_off(mode, windows, note):
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(50, ts[0] - 5, ts[-1] + 5), token_filter=mode)
+    f = SwapFetcher(chain)
+    for _ in range(windows):
+        swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))
+        assert st["complete"] and len(swaps) == 4  # the window itself is always whole
+    assert f.token_filter is False and note in f.filter_note
+
+
+def test_a_verified_filter_is_audited_and_dropped_when_it_starts_losing_swaps():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(50, ts[0] - 5, ts[-1] + 5))
+    f = SwapFetcher(chain)
+    f.token_filter = True
+    chain.token_filter = "drop"
+    for _ in range(19):
+        run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))
+    assert f.token_filter is True and f.filter_checks["audits"] == 0
+    run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))  # the 20th filtered window
+    assert f.filter_checks["audits"] == 1 and f.token_filter is False
+
+
+def test_states_scan_past_noise_to_the_newest_swap():
+    real = real_swaps()
+    ts = times_of(real)  # buy +0, sell +280, buy +545, sell +553
+    chain = FakeChain(list(real.values()) + noise(400, ts[0] - 100, ts[-1] + 100))
+    f = SwapFetcher(chain, token_filter=False)
+    times = [ts[1] + 1, ts[2] - 1, ts[-1] + 50]
+    swaps, st = run(f.states(POOL, times, ts[0] - 100))
+    assert st["resolved"] == 3 and st["unresolved"] == 0 and st["before_first"] == 0
+    assert all(c["sort"] == "desc" and c["limit"] == 100 for c in chain.calls)
+    assert st["pages"] == len(chain.calls) <= 4 and st["credits"] == 10 * st["pages"]
+    every = sorted((s for tx in real.values() for s in swaps_from_tx(tx, pool=POOL)), key=lambda s: s.order)
+    for t in times:
+        want = max((s for s in every if s.ts <= t), key=lambda s: s.order)
+        got = state_at(swaps, t)
+        assert (got.base, got.quote) == (want.base_post, want.quote_post)
+
+
+def test_states_give_up_within_the_scan_budget():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(400, ts[0] - 100, ts[-1] + 100))
+    f = SwapFetcher(chain, scan_page=10, scan_pages=1, token_filter=False)
+    swaps, st = run(f.states(POOL, [ts[2] - 1], ts[0] - 100))
+    assert st["unresolved"] == 1 and st["pages"] == 1 and swaps == []
+
+
+def test_a_time_before_any_swap_takes_the_first_swaps_pre_state():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(20, ts[0] - 50, ts[0] - 1))
+    f = SwapFetcher(chain, token_filter=False)
+    swaps, st = run(f.states(POOL, [ts[0] - 10], ts[0] - 60))
+    assert st["before_first"] == 1 and st["resolved"] == 0
+    first = min((s for tx in real.values() for s in swaps_from_tx(tx, pool=POOL)), key=lambda s: s.order)
+    got = state_at(swaps, ts[0] - 10)
+    assert (got.base, got.quote) == (first.base_pre, first.quote_pre)
+
+
+def test_a_413_halves_the_page():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()), too_large_above=40)
+    f = SwapFetcher(chain, token_filter=False)
+    swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, max_tx=1000))
+    assert st["complete"] and len(swaps) == 4
+    assert [c["limit"] for c in chain.calls] == [100, 50, 25]
+
+
+def test_without_helius_both_reads_fall_back_on_one_signature_listing():
+    real = real_swaps()
+    ts = times_of(real)
+    chain = FakeChain(list(real.values()) + noise(30, ts[0] - 5, ts[-1] + 5), gtfa=False)
+    f = SwapFetcher(chain, fallback_max_tx=10)
+    swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT, floor_ts=ts[0] - 60))
+    assert f.gtfa is False and "Method not found" in f.gtfa_error
+    assert st["method"] == "signatures" and st["fetched"] == 10 and not st["complete"]
+    pts, pst = run(f.states(POOL, [ts[-1] + 1], ts[0] - 60))
+    assert pst["method"] == "signatures" and pst["resolved"] == 1
+    assert len(chain.sig_calls) == 1  # the listing was cached for the pool
+    assert len([c for c in chain.calls]) == 1  # the provider is not asked again for the run
+
+
+def test_repeated_other_errors_end_gtfa_after_three():
+    chain = FakeChain([], gtfa="internal error")
+    f = SwapFetcher(chain, token_filter=False)
+    for _ in range(2):
+        with pytest.raises(RpcError):
+            run(f.window(POOL, 0, 10, 100))
+    assert f.gtfa is not False
+    swaps, st = run(f.window(POOL, 0, 10, 100))
+    assert f.gtfa is False and st["method"] == "signatures"
+
+
+def test_chain_breaks_count_missing_swaps():
+    pairs = []
+    for p in sorted(CHAIN.glob("*.json")):
+        fx = json.loads(p.read_text())
+        (a,), (b,) = (swaps_from_tx(tx, pool=fx["pool"]) for tx in fx["txs"])
+        assert chain_breaks([a, b]) == 0
+        pairs.append((a, b))
+    a, b = pairs[0]
+    assert chain_breaks([a, a, b]) == 1
+
+
+def test_merge_dedupes_and_encode_is_compact():
+    real = real_swaps()
+    every = [s for tx in real.values() for s in swaps_from_tx(tx, pool=POOL)]
+    merged = merge_swaps(every, every[:2])
+    assert len(merged) == len({(s.signature, s.ev_index) for s in every}) == 4
+    enc = encode_swaps(merged)
+    cols = enc["columns"]
+    assert cols[0] == "slot" and len(enc["rows"]) == 4 and len(enc["users"]) <= 4
+    row = enc["rows"][0]
+    assert row[cols.index("side")] in (0, 1) and isinstance(row[cols.index("fee_bps")], list)
+    s0 = merged[0]
+    assert row[cols.index("vault_delta")] == s0.quote_post - s0.quote_pre and row[cols.index("ix")] in (0, 1)
+
+
+def test_rpc_error_flags_unsupported_methods():
+    assert RpcError(-32601, "Method not found").method_unsupported
+    assert not RpcError(-32602, "Invalid params").method_unsupported

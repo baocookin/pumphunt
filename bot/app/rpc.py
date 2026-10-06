@@ -101,8 +101,29 @@ def http_url_from_ws(ws_url: str) -> str:
 
 def describe_http_error(exc: httpx.HTTPError) -> str:
     """Error text safe for logs and API responses: never the URL, which carries the RPC key."""
+    if isinstance(exc, RpcError):
+        return f"RpcError {exc.code}: {exc.rpc_message[:120]}"
     status = getattr(getattr(exc, "response", None), "status_code", None)
     return f"{type(exc).__name__}" + (f" {status}" if status else "")
+
+
+class RpcError(httpx.HTTPError):
+    """A JSON-RPC error object in a 200 response. Subclasses httpx.HTTPError so every existing
+    `except httpx.HTTPError` treats it like any other failed call."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(f"rpc error {code}: {message}")
+        self.code = code
+        self.rpc_message = message
+
+    @property
+    def method_unsupported(self) -> bool:
+        return self.code == -32601 or "method not found" in self.rpc_message.lower()
+
+
+def gtfa_credits(n_full: int) -> int:
+    """Helius meters full-transaction responses at 10 credits per 100 returned, 10 minimum."""
+    return max(10, -(-n_full // 100) * 10)
 
 
 class SolanaRpc:
@@ -127,7 +148,7 @@ class SolanaRpc:
         self.penalty_s = penalty_s
         self._next = 0.0
         self._lock = asyncio.Lock()
-        self.stats = {"calls": 0, "rate_limited": 0, "errors": 0}
+        self.stats: dict[str, Any] = {"calls": 0, "rate_limited": 0, "errors": 0, "credits_est": 0}
 
     async def _pace(self) -> None:
         async with self._lock:
@@ -137,24 +158,31 @@ class SolanaRpc:
         if wait > 0:
             await asyncio.sleep(wait)
 
-    async def _call(self, method: str, params: list[Any], retries: int = 3) -> Any:
-        """One JSON-RPC call. A 429 pushes every caller back by `penalty_s` and is retried a few
-        times here, so callers only see rate limiting that persists."""
+    async def _call(self, method: str, params: list[Any], retries: int = 3, credits: int = 1) -> Any:
+        """One JSON-RPC call. A 429 (HTTP status, or a JSON error with code 429 as some providers
+        send it) pushes every caller back by `penalty_s` and is retried here, so callers only see
+        rate limiting that persists. Any other JSON-RPC error raises RpcError."""
         for attempt in range(retries + 1):
             await self._pace()
             self.stats["calls"] += 1
             r = await self.c.post(
                 self.url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
             )
-            if r.status_code == 429:
+            body = r.json() if r.status_code == 200 else None
+            err = (body or {}).get("error") if isinstance(body, dict) else None
+            limited = r.status_code == 429 or (isinstance(err, dict) and err.get("code") == 429)
+            if limited:
                 self.stats["rate_limited"] += 1
                 self._next = max(self._next, time.monotonic() + self.penalty_s * (attempt + 1))
                 if attempt < retries:
                     continue
-            if r.status_code >= 400:
+            if r.status_code >= 400 or err:
                 self.stats["errors"] += 1
             r.raise_for_status()
-            return r.json().get("result")
+            if err:
+                raise RpcError(int(err.get("code") or 0), str(err.get("message") or ""))
+            self.stats["credits_est"] += credits
+            return (body or {}).get("result")
         return None
 
     async def get_transaction(self, signature: str) -> dict[str, Any] | None:
@@ -176,6 +204,52 @@ class SolanaRpc:
         if until:
             opts["until"] = until
         return await self._call("getSignaturesForAddress", [address, opts]) or []
+
+    async def get_transactions_for_address(
+        self,
+        address: str,
+        *,
+        full: bool = True,
+        sort: str = "asc",
+        limit: int = 1000,
+        filters: dict[str, Any] | None = None,
+        pagination_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Helius `getTransactionsForAddress`: an address's history with time/status filters, oldest
+        first if asked, full transactions included (no getTransaction round trips). Metered at
+        10 credits per 100 full transactions (10 minimum) or 10 flat for signatures; not part of
+        standard Solana RPC, so other providers answer -32601 (RpcError.method_unsupported)."""
+        opts: dict[str, Any] = {
+            "transactionDetails": "full" if full else "signatures",
+            "sortOrder": sort,
+            "limit": limit,
+            "commitment": "confirmed",
+        }
+        if full:
+            opts["encoding"] = "json"
+            opts["maxSupportedTransactionVersion"] = 1  # the documented maximum for this method
+        if filters:
+            opts["filters"] = filters
+        if pagination_token:
+            opts["paginationToken"] = pagination_token
+        res = await self._call("getTransactionsForAddress", [address, opts], credits=0) or {}
+        n = len(res.get("data") or [])
+        self.stats["credits_est"] += gtfa_credits(n) if full else 10
+        return res
+
+    async def get_token_largest_accounts(self, mint: str) -> list[dict[str, Any]]:
+        res = await self._call("getTokenLargestAccounts", [mint, {"commitment": "confirmed"}]) or {}
+        return list(res.get("value") or [])
+
+    async def get_multiple_accounts(self, pubkeys: list[str]) -> list[dict[str, Any] | None]:
+        opts = {"encoding": "jsonParsed", "commitment": "confirmed"}
+        res = await self._call("getMultipleAccounts", [pubkeys, opts]) or {}
+        return list(res.get("value") or [])
+
+    async def get_token_supply(self, mint: str) -> int | None:
+        res = await self._call("getTokenSupply", [mint, {"commitment": "confirmed"}]) or {}
+        amount = (res.get("value") or {}).get("amount")
+        return int(amount) if amount is not None else None
 
 
 def account_keys(tx: dict[str, Any]) -> tuple[list[str], int]:

@@ -36,13 +36,17 @@ type Stats = {
 type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; quote_mint?: string | null; harvested: boolean; source?: string };
 const SOL_QUOTES = new Set(["So11111111111111111111111111111111111111112", "11111111111111111111111111111111"]);
 type Cell = { n: number; median?: number; win_rate?: number; top2pct_share?: number; p10?: number; p90?: number };
-type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number; fills_rows?: number; swaps_fetched?: number; credits_today?: number; fills_paused?: boolean };
+type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number; fills_rows?: number; swaps_fetched?: number; credits_today?: number; fills_paused?: boolean; gtfa?: boolean | null; gtfa_error?: string | null; replay_windows?: number; window_incomplete?: number; windows_with_breaks?: number; flow_rows?: number; states_unresolved?: number; token_filter?: boolean | null; token_filter_note?: string | null };
+type ModelStat = { n?: number; median?: number; win_rate?: number; p10?: number; p90?: number };
+type Stratum = { bucket: string; n?: number; median?: number; win_rate?: number; p90?: number };
 type Gecko = { calls?: number; rate_limited?: number; not_found?: number; errors?: number };
 type DataFile = { name: string; bytes: number; mtime: number };
 type Summary = {
   harvested: number; with_data: number; with_fills?: number; alive_24h_rate: number; no_data?: Record<string, number>;
   cells: Record<string, Cell>; verdict: { status: string; why: string };
   fills?: Record<string, Record<string, Cell>>; fill_primary_size?: string | null; verdict_fill?: { status: string; why: string };
+  fill_models?: { net_ghost?: ModelStat; net_replay?: ModelStat; net_persist?: ModelStat; exit_capped_share?: number; replayed_share?: number };
+  fill_strata?: { real_in_sol?: Stratum[]; idle_at_entry?: Stratum[] };
 };
 type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number; fill_sizes_sol?: number[]; fills_daily_credits?: number };
 
@@ -158,6 +162,41 @@ export default function Page() {
         </tbody>
       </table>
 
+      <h2>Ba cách tính thực thi cho ô quyết định ({primarySize} SOL, T+30m → 1h)</h2>
+      <table>
+        <thead><tr><th>Mô hình</th><th>Giả định</th><th>n</th><th>median net</th><th>thắng</th><th>p10</th><th>p90</th></tr></thead>
+        <tbody>
+          {([
+            ["net_ghost", "Bi quan: thị trường quên lệnh mua của mình, bán vào trạng thái thật"],
+            ["net_replay", "Chính: chèn lệnh vào chuỗi swap thật, chạy lại từng swap sau đó"],
+            ["net_persist", "Lạc quan: tác động giá của mình giữ nguyên tới lúc bán"],
+          ] as const).map(([k, label]) => {
+            const m = sum?.fill_models?.[k];
+            return (
+              <tr key={k}><td className="mono">{k.replace("net_", "")}</td><td>{label}</td><td>{m?.n ?? 0}</td><td className={cls(m?.median)}>{signed(m?.median)}</td><td>{pct(m?.win_rate, 0)}</td><td>{signed(m?.p10)}</td><td>{signed(m?.p90)}</td></tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="k">{`Lệnh bán bị chặn ở lượng SOL thật trong pool: ${pct(sum?.fill_models?.exit_capped_share, 0)} số lệnh · phát lại được: ${pct(sum?.fill_models?.replayed_share, 0)} · các dòng tính bằng mô hình cũ không được đưa vào bảng.`}</p>
+
+      <h2>Chia theo điều kiện lúc vào (thăm dò, chọn sau khi đã xem dữ liệu, không phải kiểm định)</h2>
+      <div className="tiles">
+        {([["real_in_sol", "SOL thật trong pool lúc vào"], ["idle_at_entry", "Pool đã đứng yên bao lâu lúc vào"]] as const).map(([k, label]) => (
+          <div className="tile" key={k} style={{ flex: "1 1 360px" }}>
+            <div className="k">{label}</div>
+            <table>
+              <thead><tr><th>Nhóm</th><th>n</th><th>median</th><th>thắng</th><th>p90</th></tr></thead>
+              <tbody>
+                {(sum?.fill_strata?.[k] ?? []).map((r) => (
+                  <tr key={r.bucket}><td>{r.bucket}</td><td>{r.n ?? 0}</td><td className={cls(r.median)}>{signed(r.median)}</td><td>{pct(r.win_rate, 0)}</td><td>{signed(r.p90)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+
       <h2>Harvester &amp; dữ liệu</h2>
       <div className="tiles">
         <div className="tile">
@@ -166,6 +205,10 @@ export default function Page() {
           <div className="k">{`có nến ${hv?.with_data ?? 0} · không giao dịch ${hv?.no_candles ?? 0} · không pool ${hv?.no_pool ?? 0}`}{hv?.last_run_ts ? ` · chạy cuối ${Math.max(0, Math.round((now - hv.last_run_ts) / 60))} phút trước` : ""}</div>
           <div className="k">{`Gecko ${gk?.calls ?? 0} call · ${gk?.rate_limited ?? 0} lần 429 · ${gk?.not_found ?? 0} không có`}</div>
           <div className="k">{`Fills: ${hv?.fills_rows ?? 0} token có swap · ${hv?.swaps_fetched ?? 0} swap · credit RPC hôm nay ${hv?.credits_today ?? 0}${cfg?.fills_daily_credits ? ` / ${cfg.fills_daily_credits}` : ""}${hv?.fills_paused ? " · TẠM DỪNG (hết ngân sách)" : ""}`}</div>
+          <div className="k">{`getTransactionsForAddress: ${hv?.gtfa === true ? "đang dùng" : hv?.gtfa === false ? "không có, dùng đường dự phòng" : "chưa thử"} · cửa sổ phát lại ${hv?.replay_windows ?? 0} · bị cắt ${hv?.window_incomplete ?? 0}`}</div>
+          {hv?.gtfa_error && <div className="k mono">{hv.gtfa_error}</div>}
+          <div className="k">{`Cửa sổ đủ nhưng đứt chuỗi (thiếu swap) ${hv?.windows_with_breaks ?? 0} · token có order flow ${hv?.flow_rows ?? 0} · thời điểm chưa tìm được swap ${hv?.states_unresolved ?? 0}`}</div>
+          <div className="k">{`Bộ lọc tokenTransfer (bỏ giao dịch bot không swap): ${hv?.token_filter === true ? "đã kiểm chứng, đang dùng" : hv?.token_filter === false ? "tắt" : "đang kiểm chứng"}${hv?.token_filter_note ? ` · ${hv.token_filter_note}` : ""}`}</div>
           <div className="k mono">{hv?.last_error ?? ""}</div>
         </div>
         <div className="tile">

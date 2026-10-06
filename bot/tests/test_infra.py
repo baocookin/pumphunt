@@ -29,6 +29,23 @@ def test_jsonl_daily_rotation(tmp_path):
     assert [r["i"] for r in read_jsonl(tmp_path / "chain-2023-11-15.jsonl")] == [3]
 
 
+def test_jsonl_rotation_can_gzip_finished_days(tmp_path):
+    import time as _time
+
+    w = JsonlWriter(tmp_path / "swaps.jsonl", rotate_daily=True, compress_rotated=True)
+    t0 = 1_700_000_000
+    w.write({"i": 1}, now=t0)
+    w.write({"i": 2}, now=t0 + DAY)  # day changes: yesterday's file is gzipped in the background
+    w.close()
+    gz = tmp_path / "swaps-2023-11-14.jsonl.gz"
+    for _ in range(100):
+        if gz.exists() and not (tmp_path / "swaps-2023-11-14.jsonl").exists():
+            break
+        _time.sleep(0.02)
+    assert gz.exists() and [r["i"] for r in read_jsonl(gz)] == [1]
+    assert [r["i"] for r in read_jsonl(tmp_path / "swaps-2023-11-15.jsonl")] == [2]
+
+
 def test_jsonl_no_rotation(tmp_path):
     w = JsonlWriter(tmp_path / "flat.jsonl")
     w.write({"a": 1}, now=1_700_000_000)

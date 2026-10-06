@@ -3,7 +3,9 @@
 import asyncio
 import time
 
+import httpx
 import pytest
+from fakechain import POOL, FakeChain, noise, real_swaps
 from helpers import PK_A, PK_B, fake_migrate_tx, fake_pubkey
 
 from app.anchor import PUMP_PROGRAM, ChainEvent
@@ -585,80 +587,142 @@ def test_harvest_resolves_pool_for_portal_only_migrations(rec):
 
 
 # ---- executable fills through the harvester ----
-def _pumpswap_fixtures():
-    import json as _json
-    from pathlib import Path
-
-    fx = Path(__file__).parent / "fixtures" / "pumpswap"
-    return {p.stem: _json.loads(p.read_text()) for p in sorted(fx.glob("*.json"))}
-
-
-class FakeRpcSigs(FakeRpc):
-    """FakeRpc that also serves per-address signature lists (newest first) for the swap fetcher."""
-
-    def __init__(self, txs, by_address):
-        super().__init__(txs)
-        self.by_address = by_address
-
-    async def get_signatures(self, address, limit=1000, before=None, until=None):
-        self.sig_calls.append((address, limit, before, until))
-        return list(self.by_address.get(address, []))[:limit]
-
-
-def test_harvester_adds_executable_fills_and_meters_credits(rec):
-    real = _pumpswap_fixtures()
-    pool = "F4WJkbXMz8C6GXGeymcKQpXaVkUMdyrqLHc7buEUMRJp"
+def _fills_setup(rec, gtfa, noise_n=0):
+    real = real_swaps()
     times = {k: v["blockTime"] for k, v in real.items()}
-    t_mig = min(times.values()) - 120
+    t_mig = min(times.values()) - 120  # swaps at +120, +400, +665, +673 s
     rec.cfg.entry_delays_min, rec.cfg.horizons_min = [0, 5], [1, 5]
     rec.cfg.fill_sizes_sol = [0.5, 1]
-    sigs = [
-        {"signature": k, "blockTime": times[k], "slot": real[k]["slot"], "err": None}
-        for k in sorted(times, key=lambda k: -times[k])
-    ]
-    rec.rpc = FakeRpcSigs(dict(real), {pool: sigs})
-    rec.fetcher = SwapFetcher(rec.rpc)
+    rec.cfg.fills_replay_cells = ["d0_h5", "d5_h5"]
+    txs = list(real.values()) + noise(noise_n, t_mig - 300, t_mig + 900)
+    rec.rpc = FakeChain(txs, gtfa=gtfa)
+    rec.fetcher = SwapFetcher(rec.rpc, token_filter=False)
     rec.on_chain(
         ChainEvent(
             float(t_mig),
             1,
             "mig",
             "migrate",
-            {"mint": "TOK", "pool": pool, "timestamp": t_mig, "quote_mint": WSOL},
+            {"mint": "TOK", "pool": POOL, "timestamp": t_mig, "quote_mint": WSOL},
         )
     )
-    cs = [Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)]
-    g = FakeGecko(cs)
+    return t_mig
+
+
+def test_harvester_replays_a_complete_window_and_meters_credits(rec):
+    t_mig = _fills_setup(rec, gtfa=True)
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
     now = t_mig + 26 * 3600
     assert asyncio.run(rec.harvest_once(g, now=now)) == 1
     row = rec.store.survivor_rows()[0]
-    assert row["swaps"]["swaps"] == 4 and row["swaps"]["credits"] == 1 + 4 and row["fills_t0"] == t_mig
-    cell = row["fills"]["d0_h5"]
-    assert set(cell) == {"0.5", "1"} and cell["1"]["net"] < cell["0.5"]["net"] < 0.1
-    assert cell["1"]["liquidity_in_sol"] > 17 and cell["1"]["fees_sol"] > 0.01
+    # window [t_mig-300, t_mig+604] holds the swaps at +120 and +400; every decision time is inside it
+    sw = row["swaps"]
+    assert sw["window"]["method"] == "gtfa" and sw["window"]["complete"] and sw["window"]["fetched"] == 2
+    # the fixtures are a sample of the pool's swaps: the window sees the gap between the two
+    assert sw["window"]["chain_breaks"] == 1 and sw["flow_windows"] == {}
+    # every decision time lies in the window; the one before it predates the migration
+    assert sw["states"]["pages"] == 0 and sw["credits"] == 10 and sw["swaps"] == 2
+    assert row["fills_version"] == 2 and row["fills_t0"] == t_mig
+    cell = row["fills"]["d5_h5"]
+    assert set(cell) == {"0.5", "1"} and cell["1"]["model"] == "replay" and cell["1"]["replayed_swaps"] == 1
+    assert cell["1"]["net_ghost"] <= cell["1"]["net_replay"] and cell["1"]["net"] == cell["1"]["net_replay"]
+    # the ghost model charges impact twice, so a bigger order looks worse there; under replay the
+    # fixed 0.001 SOL per transaction weighs more on the smaller order
+    assert cell["1"]["net_ghost"] < cell["0.5"]["net_ghost"] and cell["1"]["net"] > cell["0.5"]["net"]
+    assert row["fills"]["d0_h5"]["1"]["model"] == "replay" and row["flow"]["d5"]["swaps"] == 1
     hs = rec.harvest_stats
-    assert (
-        hs["fills_rows"] == 1
-        and hs["swaps_fetched"] == 4
-        and hs["credits_today"] == 5
-        and hs["fills_paused"] is False
-    )
-    assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "5"
-    # the summary carries a per-size executable table and its own verdict
-    s = summarize(
-        rec.store.survivor_rows(), [0, 5], [1, 5], [0.5, 1.0]
-    )  # pydantic hands sizes over as floats
+    assert hs["gtfa"] is True and hs["replay_windows"] == 1 and hs["window_incomplete"] == 0
+    assert hs["fills_rows"] == 1 and hs["swaps_fetched"] == 2 and hs["credits_today"] == 10
+    assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "10"
+    assert hs["windows_with_breaks"] == 1 and hs["flow_rows"] == 1 and hs["states_unresolved"] == 0
+    # every fetched swap is in the day's dataset file, compact and lossless
+    lines = list(read_jsonl(rec.swaps_log.path_for(now)))
+    assert len(lines) == 1 and lines[0]["pool"] == row["pool"] and len(lines[0]["swaps"]["rows"]) == 2
+    s = summarize(rec.store.survivor_rows(), [0, 5], [1, 5], [0.5, 1.0])
     assert s["with_fills"] == 1 and s["fills"]["1"]["d0_h5"]["n"] == 1 and s["fill_primary_size"] == "1"
-    # rows written by an earlier build keyed "1.0" still count
+    assert s["verdict_fill"]["status"] == "INSUFFICIENT" and s["fills_version"] == 2
+    # rows from the older execution model never enter the tables
     legacy = {"mint": "L", "pool": "P", "fills": {"d0_h5": {"1.0": {"net": 0.25}}}}
-    s2 = summarize([legacy], [0], [5], [1.0])
-    assert s2["fills"]["1"]["d0_h5"]["n"] == 1
-    assert s["verdict_fill"]["status"] == "INSUFFICIENT"
+    assert summarize([legacy], [0], [5], [1.0])["fills"]["1"]["d0_h5"]["n"] == 0
+
+
+def test_harvester_without_helius_falls_back_and_marks_replay_where_it_can(rec):
+    t_mig = _fills_setup(rec, gtfa=False)
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
+    assert asyncio.run(rec.harvest_once(g, now=t_mig + 26 * 3600)) == 1
+    row = rec.store.survivor_rows()[0]
+    assert row["swaps"]["window"]["method"] == "signatures" and row["swaps"]["window"]["complete"]
+    assert rec.harvest_stats["gtfa"] is False and "Method not found" in rec.harvest_stats["gtfa_error"]
+    assert row["fills"]["d5_h5"]["1"]["model"] == "replay"  # the window was small enough to fetch whole
+
+
+def test_a_window_over_its_cap_still_yields_flow_and_states(rec):
+    t_mig = _fills_setup(rec, gtfa=True, noise_n=3000)  # 2.5 bot transactions a second, 4 swaps
+    rec.cfg.fills_replay_max_tx = 500
+    rec.fetcher.scan_pages = 10
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
+    assert asyncio.run(rec.harvest_once(g, now=t_mig + 26 * 3600)) == 1
+    row = rec.store.survivor_rows()[0]
+    sw = row["swaps"]
+    assert not sw["window"]["complete"] and sw["window"]["fetched"] == 100
+    # the 5-minute windows before each entry fit their own cap and give the order flow
+    assert sw["flow_windows"]["d5"]["complete"] and row["flow"]["d5"]["swaps"] == 1
+    # entry/exit states come from backwards scans past the noise; the first two times precede
+    # every swap, so their state is the first swap's pre-state
+    st = sw["states"]
+    assert st["unresolved"] == 0 and st["resolved"] == 3 and st["before_first"] == 2
+    cell = row["fills"]["d5_h5"]["1"]
+    assert cell["model"] == "ghost" and cell["net_replay"] is None  # no complete window to replay
+    assert rec.harvest_stats["window_incomplete"] == 1
+
+
+class FlakyChain(FakeChain):
+    """Answers the first `ok` getTransactionsForAddress calls, then fails with HTTP 500."""
+
+    def __init__(self, txs, ok):
+        super().__init__(txs)
+        self.ok = ok
+
+    async def get_transactions_for_address(self, *a, **kw):
+        if len(self.calls) >= self.ok:
+            req = httpx.Request("POST", "http://rpc.invalid")
+            raise httpx.HTTPStatusError("500", request=req, response=httpx.Response(500, request=req))
+        return await super().get_transactions_for_address(*a, **kw)
+
+
+def test_credits_of_a_pool_that_fails_half_way_are_still_metered(rec):
+    t_mig = _fills_setup(rec, gtfa=True, noise_n=3000)
+    rec.cfg.fills_replay_max_tx = 500
+    rec.rpc = FlakyChain(rec.rpc.txs, ok=2)  # the window's first page and its count, then errors
+    rec.fetcher = SwapFetcher(rec.rpc, token_filter=False)
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
+    now = t_mig + 26 * 3600
+    assert asyncio.run(rec.harvest_once(g, now=now)) == 0  # retried next cycle
+    assert rec.harvest_stats["credits_today"] == 20 and "fills TOK" in rec.harvest_stats["last_error"]
+    assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "20"
+
+
+def test_the_budget_is_checked_before_every_pool(rec):
+    t_mig = _fills_setup(rec, gtfa=True)
+    rec.on_chain(
+        ChainEvent(
+            float(t_mig + 1),
+            2,
+            "mig2",
+            "migrate",
+            {"mint": "TOK2", "pool": POOL, "timestamp": t_mig + 1, "quote_mint": WSOL},
+        )
+    )
+    rec.cfg.fills_daily_credits = 5  # the first pool's single page (10 credits) spends it
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
+    now = t_mig + 26 * 3600
+    assert asyncio.run(rec.harvest_once(g, now=now)) == 1
+    assert rec.harvest_stats["fills_paused"] is True and rec.store.pending_counts(now)[1] == 1
 
 
 def test_harvester_pauses_when_the_daily_credit_budget_is_spent(rec):
     rec.cfg.fills_daily_credits = 10
-    rec.rpc = FakeRpcSigs({}, {})
+    rec.rpc = FakeChain([])
     rec.fetcher = SwapFetcher(rec.rpc)
     now = 1_700_000_000.0
     rec.store.incr_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now)), 10)
@@ -669,16 +733,17 @@ def test_harvester_pauses_when_the_daily_credit_budget_is_spent(rec):
     assert rec.store.pending_counts(now)[1] == 1  # the row waits instead of being harvested without fills
 
 
-def test_rows_harvested_before_fills_are_requeued_once(rec):
+def test_rows_from_an_older_execution_model_are_requeued_once(rec):
     t0 = 1_700_000_000
-    rec.on_chain(mig(float(t0), mint="OLD", pool="P1"))
-    rec.on_chain(mig(float(t0), mint="USDC", pool="P2"))
-    rec.store.mark_harvested("OLD", {"mint": "OLD", "pool": "P1", "quote_mint": None})
-    rec.store.mark_harvested("USDC", {"mint": "USDC", "pool": "P2", "quote_mint": "EPjF"})  # not SOL-quoted
-    assert rec.requeue_for_fills() == 1
-    assert (
-        rec.store.pending_counts(t0 + 10)[1] == 1
-        and rec.store.pending_harvest(t0 + 10, 10)[0]["mint"] == "OLD"
+    for m, pool in (("NOFILLS", "P1"), ("V1", "P2"), ("V2", "P3"), ("USDC", "P4")):
+        rec.on_chain(mig(float(t0), mint=m, pool=pool))
+    rec.store.mark_harvested("NOFILLS", {"mint": "NOFILLS", "pool": "P1", "quote_mint": None})
+    rec.store.mark_harvested("V1", {"mint": "V1", "pool": "P2", "quote_mint": None, "fills": {"d0_h5": {}}})
+    rec.store.mark_harvested(
+        "V2", {"mint": "V2", "pool": "P3", "quote_mint": None, "fills": {}, "fills_version": 2}
     )
-    assert rec.requeue_for_fills() == 0  # flagged: never again
-    assert rec.store.get_kv("fills_requeued_v1")
+    rec.store.mark_harvested("USDC", {"mint": "USDC", "pool": "P4", "quote_mint": "EPjF"})  # not SOL-quoted
+    assert rec.requeue_for_fills() == 2
+    assert sorted(r["mint"] for r in rec.store.pending_harvest(t0 + 10, 10)) == ["NOFILLS", "V1"]
+    assert rec.requeue_for_fills() == 0  # flagged: never again for this version
+    assert rec.store.get_kv("fills_requeued_v2")
