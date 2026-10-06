@@ -38,6 +38,8 @@ docker compose up --build
 # API http://localhost:8080  ·  dashboard http://localhost:3000  ·  dữ liệu trong volume botdata (/data)
 ```
 
+Port 8080/3000 đã bị chiếm? Đổi `BOT_PORT` / `WEB_PORT` trong `.env` rồi `docker compose up --build` lại (cần `--build` vì dashboard nướng URL API vào lúc build).
+
 Không Docker:
 
 ```bash
