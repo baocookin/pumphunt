@@ -5,6 +5,9 @@ Files under data_dir:
                            (trades compact unless record_raw_trades), with slot + signature
   portal-YYYY-MM-DD.jsonl  every PumpPortal message
   migrations.jsonl         one line per graduation sighting (portal, rpc-confirmed, chain)
+
+Counters per hour: migrations_confirmed counts each mint once, the first time a pool is
+known from chain (websocket event, or getTransaction triggered by either feed).
   survivor.jsonl           one line per harvested token (hypothesis C metrics)
 """
 
@@ -16,7 +19,7 @@ from typing import Any
 import httpx
 
 from .anchor import PUMP_PROGRAM, ChainEvent
-from .chain_feed import SolanaLogsFeed
+from .chain_feed import ChainNotification, SolanaLogsFeed
 from .config import Settings
 from .events import Event
 from .feed import PumpPortalFeed
@@ -25,6 +28,10 @@ from .jsonl import JsonlWriter
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import Store, hour_key
 from .survivor import compute_metrics
+
+# Subscribe to the wallet that signs migrations once it clearly is one keeper, not random users.
+SIGNER_MIN_N = 10
+SIGNER_MIN_SHARE = 0.8
 
 _TRADE_COMPACT = (
     "mint",
@@ -56,31 +63,51 @@ class Recorder:
             "migrate": 0,
             "portal_create": 0,
             "portal_migrate": 0,
+            "portal_migrate_other": 0,  # PumpPortal also relays other launchpads' migrations
             "harvested": 0,
         }
+        self.portal_pools: dict[str, int] = {}  # PumpPortal `pool` field of migration messages
         self.last_chain_ts = 0.0
         self.last_portal_ts = 0.0
         self.feed: SolanaLogsFeed | None = None
+        self.portal_feed: PumpPortalFeed | None = None
         self.rpc: SolanaRpc | None = None
         self.learned_authority: str | None = None
+        self.learned_signer: str | None = None
         self.rpc_stats: dict[str, Any] = {
             "confirmed": 0,
             "failed": 0,
             "no_event": 0,
             "last_rpc_ts": 0.0,
             "via": {"log": 0, "cpi": 0, "accounts": 0},
+            "triggered": {"portal": 0, "chain": 0},
             "last_no_event": None,
             "withdraw_authority": None,
             "authority_static": None,
             "migrate_ix": None,
+            "migrate_users": {},  # signer -> confirmed migrations, top entries only
+            "migrate_user_static": None,
         }
         self._tasks: set[asyncio.Task] = set()
+        self._claimed: dict[str, None] = {}  # signatures already handled by some path (ordered set)
 
     def mentions(self) -> list[str]:
         out = [self.learned_authority or self.cfg.migration_authority]
+        if self.learned_signer and self.learned_signer not in out:
+            out.append(self.learned_signer)
         if self.cfg.chain_scope == "full":
             out.append(PUMP_PROGRAM)
         return out
+
+    def _claim(self, signature: str) -> bool:
+        """True the first time a signature is seen. Both feeds and the log decoder check here,
+        so one migration costs at most one getTransaction."""
+        if not signature or signature in self._claimed:
+            return False
+        self._claimed[signature] = None
+        while len(self._claimed) > 20_000:
+            del self._claimed[next(iter(self._claimed))]
+        return True
 
     def _spawn(self, coro) -> None:
         """Run a coroutine in the background when a loop is running (no-op in sync tests)."""
@@ -111,10 +138,34 @@ class Recorder:
             self.store.incr("completes_chain", hour)
         elif ev.kind == "migrate":
             self.store.incr("migrations_chain", hour)
+            self._claim(ev.signature)  # decoded from the logs: no need to fetch this tx
             row = self._migration_row(ev.data, ev.ts, ev.slot, ev.signature, "chain")
             if row["mint"] and row["pool"]:
-                self.store.add_migration(row)
-                self.migrations.write(row)
+                self._register(row, hour)
+
+    def _register(self, row: dict[str, Any], hour: str) -> str:
+        """Record a sighting that carries the pool; count the mint as confirmed the first time."""
+        status = self.store.add_migration(row)
+        self.migrations.write(row)
+        if status != "dup":
+            self.store.incr("migrations_confirmed", hour)
+        return status
+
+    def on_notification(self, n: ChainNotification) -> None:
+        """Websocket saw a tx of the authority but its logs held no migrate event.
+
+        Almost always the event was cut off with the logs (10 KB cap), so confirm it by
+        signature exactly like a PumpPortal sighting. Only for the authority subscription:
+        the program-wide one in "full" scope is far too busy to fetch.
+        """
+        if n.err or "migrate" in n.kinds or self.rpc is None:
+            return
+        if n.mention is None or n.mention == PUMP_PROGRAM or n.mention not in self.mentions():
+            return
+        if not self._claim(n.signature):
+            return
+        self.rpc_stats["triggered"]["chain"] += 1
+        self._spawn(self.confirm_migration(n.signature, n.ts, delays=(0, 3, 10)))
 
     @staticmethod
     def _migration_row(
@@ -135,7 +186,10 @@ class Recorder:
         }
 
     async def run_chain(self) -> None:
-        self.feed = SolanaLogsFeed(self.cfg.solana_ws_url, self.mentions(), self.cfg.chain_commitment)
+        self.feed = SolanaLogsFeed(
+            self.cfg.solana_ws_url, self.mentions(), self.cfg.chain_commitment, stale_s=self.cfg.chain_stale_s
+        )
+        self.feed.on_notification = self.on_notification
         print(
             f"[chain] logsSubscribe {self.cfg.solana_ws_url} scope={self.cfg.chain_scope} {self.mentions()}"
         )
@@ -151,6 +205,11 @@ class Recorder:
             self.counts["portal_create"] += 1
             self.store.incr("creates_portal", hour)
         elif ev.is_migration:
+            self.portal_pools[ev.pool] = self.portal_pools.get(ev.pool, 0) + 1
+            if "pump" not in ev.pool.lower():
+                # bonk.fun / Raydium LaunchLab graduations ride the same channel; not our market.
+                self.counts["portal_migrate_other"] += 1
+                return
             self.counts["portal_migrate"] += 1
             self.store.incr("migrations_portal", hour)
             # No pool address here; RPC confirmation (below) or the chain feed fills it in,
@@ -163,15 +222,18 @@ class Recorder:
                 "signature": ev.signature,
                 "source": "portal",
             }
-            if self.store.add_migration(row):
+            if self.store.add_migration(row) == "new":
                 self.migrations.write(row)
-            if self.rpc is not None and ev.signature:
+            if self.rpc is not None and self._claim(ev.signature):
+                self.rpc_stats["triggered"]["portal"] += 1
                 self._spawn(self.confirm_migration(ev.signature, ev.ts))
 
     async def run_portal(self) -> None:
-        feed = PumpPortalFeed(self.cfg.pumpportal_ws_url, self.cfg.pumpportal_api_key)
+        self.portal_feed = PumpPortalFeed(
+            self.cfg.pumpportal_ws_url, self.cfg.pumpportal_api_key, stale_s=self.cfg.pumpportal_stale_s
+        )
         print(f"[portal] {self.cfg.pumpportal_ws_url}")
-        async for ev in feed.events():
+        async for ev in self.portal_feed.events():
             self.on_portal(ev)
 
     # ---- RPC confirmation of PumpPortal migrations ----
@@ -202,15 +264,38 @@ class Recorder:
             return False
         row = self._migration_row(info["event"], seen_ts, info["slot"], signature, "rpc")
         if row["mint"] and row["pool"]:
-            self.store.add_migration(row)
-            self.migrations.write(row)
+            self._register(row, hour_key(seen_ts))
             self.store.incr("migrations_rpc", hour_key(seen_ts))
         self.rpc_stats["confirmed"] += 1
         self.rpc_stats["last_rpc_ts"] = time.time()
         via = info["event"].get("via", "log")
         self.rpc_stats["via"][via] = self.rpc_stats["via"].get(via, 0) + 1
         await self._learn_authority(info.get("accounts"))
+        await self._learn_signer(info.get("accounts"))
         return True
+
+    async def _learn_signer(self, accounts: dict[str, Any] | None) -> None:
+        """Watch the wallet that signs migrations once one wallet clearly does nearly all of them.
+
+        `withdraw_authority` can be loaded through an address lookup table, which
+        `logsSubscribe` cannot match; the signer is always a static key.
+        """
+        if not accounts or not accounts.get("user"):
+            return
+        user = accounts["user"]
+        users = self.rpc_stats["migrate_users"]
+        users[user] = users.get(user, 0) + 1
+        if len(users) > 10:  # keep the table small: drop the rarest
+            del users[min(users, key=users.get)]
+        self.rpc_stats["migrate_user_static"] = accounts.get("user_static")
+        if self.learned_signer or self.feed is None or not accounts.get("user_static"):
+            return
+        total = self.rpc_stats["confirmed"]
+        if total < SIGNER_MIN_N or users[user] < SIGNER_MIN_SHARE * total:
+            return
+        print(f"[rpc] {user} signed {users[user]}/{total} migrations; subscribing to it as well")
+        self.learned_signer = user
+        await self.feed.set_mentions(self.mentions())
 
     async def _learn_authority(self, accounts: dict[str, Any] | None) -> None:
         if not accounts:
@@ -289,6 +374,8 @@ class Recorder:
                 counts=self.counts,
                 chain_scope=self.cfg.chain_scope,
                 chain_feed=self.feed.stats if self.feed else None,
+                portal_feed=self.portal_feed.stats if self.portal_feed else None,
+                portal_pools=self.portal_pools,
                 rpc=self.rpc_stats,
                 mentions=self.mentions(),
             )

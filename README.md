@@ -24,8 +24,8 @@ Một container `pumphunt` (FastAPI phục vụ cả API lẫn dashboard đã bu
 |---|---|---|
 | Decoder | `bot/app/anchor.py` | Decode `CreateEvent / TradeEvent / CompleteEvent / CompletePumpAmmMigrationEvent` từ log `Program data:`; discriminator + layout lấy từ IDL chính thức. Giữ raw base64 để decode lại sau. |
 | Chain feed | `bot/app/chain_feed.py` | `logsSubscribe` một subscription/địa chỉ, có **slot**, reconnect. |
-| Portal feed | `bot/app/feed.py` | Kênh miễn phí (`subscribeNewToken`, `subscribeMigration`): đếm coverage + nguồn migration dự phòng. |
-| RPC confirm | `bot/app/rpc.py` | Mỗi migration PumpPortal báo → `getTransaction(signature)` (1 credit) → decode event lấy **pool + slot** từ chain, đọc `withdraw_authority` thật từ instruction `migrate`/`migrate_v2` và tự re‑subscribe feed nếu địa chỉ đoán sai. |
+| Portal feed | `bot/app/feed.py` | Kênh miễn phí (`subscribeNewToken`, `subscribeMigration`): đếm coverage + nguồn migration dự phòng. Kênh `subscribeMigration` gộp cả bonk.fun/Raydium LaunchLab; recorder lọc theo trường `pool`, chỉ ghi pump.fun (`portal_migrate_other` đếm phần còn lại). Cả hai websocket tự nối lại khi im lặng quá `PH_PUMPPORTAL_STALE_S` (120s) / `PH_CHAIN_STALE_S` (600s), vì socket chết vẫn trả lời ping. |
+| RPC confirm | `bot/app/rpc.py` | Mỗi tx migrate mà websocket thấy (log bị Solana cắt ở 10KB nên không decode được) hoặc PumpPortal báo → `getTransaction(signature)` (1 credit, dedup theo signature) → lấy **pool + slot** từ bản sao event qua self‑CPI, hoặc từ account của instruction `migrate`/`migrate_v2`; đọc `withdraw_authority` thật và tự re‑subscribe nếu địa chỉ đoán sai. |
 | Recorder | `bot/app/recorder.py` | Đếm theo giờ, registry migration (mint, pool, slot), JSONL xoay theo ngày. |
 | Harvester | `bot/app/gecko.py`, `recorder.py` | Sau 25h, kéo nến 1 phút 24h đầu của pool PumpSwap; tự tra pool theo mint nếu chỉ thấy qua PumpPortal. |
 | Metrics | `bot/app/survivor.py` | Return net theo (delay vào × thời gian giữ), max drawdown, độ cũ của giá thoát, volume buckets, lottery detector, **verdict đăng ký trước**. |
@@ -105,7 +105,7 @@ Chạy `python -m app.analyze data/survivor.jsonl --cost_bps 500` để xem kế
 ## Đọc trạng thái (`/api/stats` → `status`)
 
 * `chain_feed.connected / subscribed / notifications`: WebSocket đã nối, số subscription được RPC xác nhận, số notification nhận. `notifications = 0` kéo dài trong khi `counts.portal_migrate` tăng = địa chỉ đang subscribe không nằm trong tx migrate.
-* `rpc.confirmed / failed / no_event`: số migration PumpPortal được xác nhận on‑chain. `rpc.withdraw_authority` là địa chỉ thật đọc từ tx; `authority_static=false` nghĩa là nó được nạp qua address‑lookup‑table và `logsSubscribe` không thể theo dõi — khi đó đường RPC‑confirm là nguồn slot/pool chính, vẫn đủ cho giả thuyết C.
+* `rpc.confirmed / failed / no_event`: số migration được xác nhận on‑chain qua `getTransaction`, kích hoạt bởi websocket (`rpc.triggered.chain`) hoặc PumpPortal (`rpc.triggered.portal`); `rpc.via` cho biết event đọc từ log, từ bản sao self‑CPI, hay từ account của instruction. `rpc.withdraw_authority` là địa chỉ thật đọc từ tx; `authority_static=false` nghĩa là tx đó nạp nó qua address‑lookup‑table và `logsSubscribe` không thấy. Vì người ký luôn là key tĩnh, recorder đếm `rpc.migrate_users` và tự subscribe thêm ví ký ≥80% trong ≥10 migration đã xác nhận.
 * `mentions`: danh sách địa chỉ feed đang subscribe (sau khi tự học).
 
 ## Pháp lý (Việt Nam)

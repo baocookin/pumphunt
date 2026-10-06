@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # HTTP endpoint for getTransaction; derived from the websocket URL when unset.
     solana_http_url: str | None = None
     chain_commitment: str = "confirmed"
+    # Reconnect when a websocket stays silent this long (dead sockets that still answer pings).
+    chain_stale_s: float = 600
+    pumpportal_stale_s: float = 120
     # "migrations": subscribe only to transactions mentioning pump.fun's withdraw/migration
     #   authority (~1k tx/day, a few MB/day — fits any free RPC tier).
     # "full": also subscribe to the whole pump.fun program (every create/trade,
