@@ -53,8 +53,8 @@ def noise(n: int, t_from: int, t_to: int, tag: str = "mev") -> list[dict]:
     return out
 
 
-def is_trade(tx: dict) -> bool:
-    return bool(swaps_from_tx(tx, pool=POOL))
+def is_trade(tx: dict, pool: str = POOL) -> bool:
+    return bool(swaps_from_tx(tx, pool=pool))
 
 
 class FakeChain:
@@ -73,6 +73,8 @@ class FakeChain:
         max_full=1000,
         too_large_above=None,
         finalized_only=True,
+        pool=POOL,
+        missed=(),
     ):
         self.txs = sorted(txs, key=lambda t: (t["slot"], t.get("transactionIndex", 0)))
         self.by_sig = {t["transaction"]["signatures"][0]: t for t in self.txs}
@@ -81,6 +83,8 @@ class FakeChain:
         self.max_full = max_full
         self.too_large_above = too_large_above
         self.finalized_only = finalized_only  # like Helius: tokenTransfer needs finalized commitment
+        self.pool = pool
+        self.missed = set(missed)  # signatures the filter's index lacks (seen once on Helius)
         self.calls: list[dict] = []
         self.sig_calls: list[tuple] = []
         self.tx_calls: list[str] = []
@@ -111,9 +115,12 @@ class FakeChain:
             raise httpx.HTTPStatusError("413", request=req, response=httpx.Response(413, request=req))
         bt = filters.get("blockTime") or {}
         lo, hi = bt.get("gte", float("-inf")), bt.get("lte", float("inf"))
-        items = [t for t in self.txs if lo <= t["blockTime"] <= hi]
+        sl = filters.get("slot") or {}
+        s_lo, s_hi = sl.get("gte", float("-inf")), sl.get("lte", float("inf"))
+        items = [t for t in self.txs if lo <= t["blockTime"] <= hi and s_lo <= t["slot"] <= s_hi]
         if filtered and self.token_filter in ("honour", "drop"):
-            items = [t for t in items if is_trade(t)]
+            items = [t for t in items if is_trade(t, self.pool)]
+            items = [t for t in items if t["transaction"]["signatures"][0] not in self.missed]
             if self.token_filter == "drop":
                 items = items[1:]
         if sort == "desc":

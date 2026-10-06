@@ -37,7 +37,7 @@ type Migration = { mint: string; pool: string | null; ts: number; slot: number |
 const SOL_QUOTES = new Set(["So11111111111111111111111111111111111111112", "11111111111111111111111111111111"]);
 type Cell = { n: number; median?: number; win_rate?: number; top2pct_share?: number; p10?: number; p90?: number };
 type Snapshots = { taken?: number; late?: number; errors?: number; queued?: number; last_ts?: number; last_error?: string | null };
-type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number; fills_rows?: number; swaps_fetched?: number; credits_today?: number; fills_paused?: boolean; gtfa?: boolean | null; gtfa_error?: string | null; replay_windows?: number; window_incomplete?: number; windows_with_breaks?: number; flow_rows?: number; states_unresolved?: number; token_filter?: boolean | null; token_filter_note?: string | null; features_rows?: number; funding_rows?: number; funding_lookups?: number; features_error?: string | null };
+type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number; fills_rows?: number; swaps_fetched?: number; credits_today?: number; fills_paused?: boolean; gtfa?: boolean | null; gtfa_error?: string | null; replay_windows?: number; window_incomplete?: number; windows_with_breaks?: number; flow_rows?: number; states_unresolved?: number; token_filter?: boolean | null; token_filter_note?: string | null; token_filter_checks?: Record<string, number>; features_rows?: number; funding_rows?: number; funding_lookups?: number; features_error?: string | null };
 type ModelStat = { n?: number; median?: number; win_rate?: number; p10?: number; p90?: number };
 type Stratum = { bucket: string; n?: number; median?: number; win_rate?: number; p90?: number };
 type Gecko = { calls?: number; rate_limited?: number; not_found?: number; errors?: number };
@@ -234,7 +234,7 @@ export default function Page() {
           <div className="k">{`Snapshot holder đúng giờ (T+30/T+60): ${stats?.status.snapshots?.taken ?? 0} đã chụp · ${stats?.status.snapshots?.late ?? 0} trễ, bỏ · ${stats?.status.snapshots?.errors ?? 0} lỗi · ${stats?.status.snapshots?.queued ?? 0} đang chờ`}</div>
           <div className="k">{`Đặc trưng: ${hv?.features_rows ?? 0} token có lịch sử bonding curve · ${hv?.funding_rows ?? 0} token tra nguồn tiền (${hv?.funding_lookups ?? 0} ví tra qua RPC)`}</div>
           {(stats?.status.snapshots?.last_error || hv?.features_error) && <div className="k mono">{[stats?.status.snapshots?.last_error, hv?.features_error].filter(Boolean).join(" · ")}</div>}
-          <div className="k">{`Bộ lọc tokenTransfer (bỏ giao dịch bot không swap): ${hv?.token_filter === true ? "đã kiểm chứng, đang dùng" : hv?.token_filter === false ? "tắt" : "đang kiểm chứng"}${hv?.token_filter_note ? ` · ${hv.token_filter_note}` : ""}`}</div>
+          <div className="k">{`Bộ lọc tokenTransfer (bỏ giao dịch bot không swap): ${hv?.token_filter === true ? "đã kiểm chứng, đang dùng" : hv?.token_filter === false ? "tắt" : "đang kiểm chứng"}${hv?.token_filter_note ? ` · ${hv.token_filter_note}` : ""}${hv?.token_filter_checks?.repaired ? ` · đã đọc lại ${hv.token_filter_checks.repaired} swap bộ lọc bỏ sót` : ""}`}</div>
           <div className="k mono">{hv?.last_error ?? ""}</div>
         </div>
         <div className="tile">
