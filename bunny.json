@@ -1,0 +1,39 @@
+{
+  "id": "pumphunt",
+  "name": "pumphunt",
+  "description": "pump.fun on-chain recorder + post-graduation research harness (FastAPI + Redis) with a Next.js dashboard, on Magic Containers.",
+  "icon": "code",
+  "containers": [
+    {
+      "name": "bot",
+      "imageNamespace": "ghcr.io",
+      "imageName": "REPLACE_OWNER/pumphunt-bot",
+      "imageTag": "latest",
+      "environmentVariables": [
+        { "key": "PH_REDIS_URL", "value": "redis://localhost:6379" },
+        { "key": "PH_DATA_DIR", "value": "/data" },
+        { "key": "PH_SOLANA_WS_URL", "value": "wss://api.mainnet-beta.solana.com" }
+      ],
+      "volumes": [{ "mountPath": "/data", "sizeMB": 4096 }],
+      "endpoints": [{ "displayName": "API", "type": "CDN", "containerPort": 8080 }]
+    },
+    {
+      "name": "web",
+      "imageNamespace": "ghcr.io",
+      "imageName": "REPLACE_OWNER/pumphunt-web",
+      "imageTag": "latest",
+      "environmentVariables": [],
+      "volumes": [],
+      "endpoints": [{ "displayName": "Dashboard", "type": "CDN", "containerPort": 3000 }]
+    },
+    {
+      "name": "redis",
+      "imageNamespace": "library",
+      "imageName": "redis",
+      "imageTag": "7-alpine",
+      "environmentVariables": [],
+      "volumes": [{ "mountPath": "/data", "sizeMB": 512 }],
+      "endpoints": []
+    }
+  ]
+}

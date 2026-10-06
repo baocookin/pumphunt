@@ -1,0 +1,41 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #121923;
+  --border: #1f2a37;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --green: #3fb950;
+  --red: #f85149;
+  --amber: #d29922;
+  --accent: #58a6ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 20px; margin: 0 0 16px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 8px; }
+a { color: var(--accent); text-decoration: none; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.badge.ok { color: var(--green); border-color: var(--green); }
+.badge.bad { color: var(--red); border-color: var(--red); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tile .k { color: var(--muted); font-size: 12px; }
+.tile .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile.verdict.pass { border-color: var(--green); }
+.tile.verdict.kill { border-color: var(--red); }
+.tile.verdict.inconclusive { border-color: var(--amber); }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+tr:last-child td { border-bottom: 0; }
+.pos { color: var(--green); } .neg { color: var(--red); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.empty { color: var(--muted); padding: 16px; text-align: center; }
+.err { color: var(--red); }
+@media (max-width: 720px) { table { display: block; overflow-x: auto; } }
