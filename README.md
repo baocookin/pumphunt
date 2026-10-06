@@ -24,9 +24,8 @@ Một container `pumphunt` (FastAPI phục vụ cả API lẫn dashboard đã bu
 |---|---|---|
 | Decoder | `bot/app/anchor.py` | Decode `CreateEvent / TradeEvent / CompleteEvent / CompletePumpAmmMigrationEvent` từ log `Program data:`; discriminator + layout lấy từ IDL chính thức. Giữ raw base64 để decode lại sau. |
 | Chain feed | `bot/app/chain_feed.py` | `logsSubscribe` một subscription/địa chỉ, có **slot**, reconnect. |
-| Portal feed | `bot/app/feed.py` | Kênh miễn phí (`subscribeNewToken`, `subscribeMigration`): đếm coverage + nguồn migration dự phòng. |
+| Portal feed | `bot/app/feed.py` | Kênh miễn phí (`subscribeNewToken`, `subscribeMigration`): đếm coverage + nguồn migration dự phòng. Kênh `subscribeMigration` gộp cả bonk.fun/Raydium LaunchLab; recorder lọc theo trường `pool`, chỉ ghi pump.fun (`portal_migrate_other` đếm phần còn lại). Cả hai websocket tự nối lại khi im lặng quá `PH_PUMPPORTAL_STALE_S` (120s) / `PH_CHAIN_STALE_S` (600s), vì socket chết vẫn trả lời ping. |
 | RPC confirm | `bot/app/rpc.py` | Mỗi tx migrate mà websocket thấy (log bị Solana cắt ở 10KB nên không decode được) hoặc PumpPortal báo → `getTransaction(signature)` (1 credit, dedup theo signature) → lấy **pool + slot** từ bản sao event qua self‑CPI, hoặc từ account của instruction `migrate`/`migrate_v2`; đọc `withdraw_authority` thật và tự re‑subscribe nếu địa chỉ đoán sai. |
-| PumpPortal | `bot/app/feed.py` | Kênh `subscribeMigration` gộp cả bonk.fun/Raydium LaunchLab; recorder lọc theo trường `pool`, chỉ ghi pump.fun (`portal_migrate_other` đếm phần còn lại). Cả hai websocket tự nối lại khi im lặng quá `PH_PUMPPORTAL_STALE_S` (120s) / `PH_CHAIN_STALE_S` (600s), vì socket chết vẫn trả lời ping. |
 | Recorder | `bot/app/recorder.py` | Đếm theo giờ, registry migration (mint, pool, slot), JSONL xoay theo ngày. |
 | Harvester | `bot/app/gecko.py`, `recorder.py` | Sau 25h, kéo nến 1 phút 24h đầu của pool PumpSwap; tự tra pool theo mint nếu chỉ thấy qua PumpPortal. |
 | Metrics | `bot/app/survivor.py` | Return net theo (delay vào × thời gian giữ), max drawdown, độ cũ của giá thoát, volume buckets, lottery detector, **verdict đăng ký trước**. |
