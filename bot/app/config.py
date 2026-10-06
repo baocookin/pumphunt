@@ -78,13 +78,23 @@ class Settings(BaseSettings):
 
     # --- executable fills: swap-level simulation on PumpSwap reserves (needs RPC credits) ---
     fills_enabled: bool = True
-    # Measured in production: busy pools hit the cap, so credits per pool ~= cap + pages + points.
-    # 60 min / 150 tx keeps ~1,200 pools/day near 200k credits/day (~6M/month on a 10M plan);
-    # entry/exit states stay exact (one tx per decision time), only the drawdown path thins out.
-    fills_full_window_min: int = 60  # every swap in this window after migration is fetched
-    fills_max_swaps: int = 150  # cap on transactions fetched per pool inside that window
-    fills_max_pages: int = 25  # signature pages (1000 each) per pool
-    fills_daily_credits: int = 200_000  # RPC credits the harvester may spend per UTC day
+    # Cells whose whole [entry, exit] window is fetched so every swap can be replayed with our
+    # position in the pool (the primary estimate). Other cells use entry/exit states only and
+    # report the ghost (pessimistic) and persist (optimistic) bounds.
+    fills_replay_cells: list[str] = ["d30_h60", "d60_h60"]
+    fills_flow_s: int = 300  # order-flow features cover this span before each replayed entry
+    # Transactions per pool, not swaps: MEV bots that only read the price outnumber trades ~20:1
+    # on busy pools. 40 random pools held median 13, p90 7,041, max > 31,000 transactions in
+    # the replay window; 15,000 completes ~93% of windows at <= 1,500 credits (0.1 per tx).
+    fills_replay_max_tx: int = 15_000
+    fills_flow_max_tx: int = 3_000  # 5-minute flow window when the replay window was too big
+    fills_scan_pages: int = 3  # 100-transaction pages scanned back from a decision time for a swap
+    fills_token_filter: bool = True  # try Helius' tokenTransfer filter; used only once verified
+    fills_max_pages: int = 40  # signature pages (1,000 each), only without getTransactionsForAddress
+    # RPC credits all research reads (fills, curve history, holders, funding) may spend per UTC
+    # day; the harvester pauses until the next day once reached. 270k/day is ~8.1M/month,
+    # inside the Developer plan's 10M with room for the recorder itself (~5k/day).
+    fills_daily_credits: int = 270_000
     fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction

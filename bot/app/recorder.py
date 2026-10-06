@@ -19,6 +19,7 @@ Sources of migrate signatures, all deduplicated through `_claim`:
 """
 
 import asyncio
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -30,13 +31,13 @@ from .chain_feed import ChainNotification, SolanaLogsFeed
 from .config import Settings
 from .events import Event
 from .feed import PumpPortalFeed
-from .fills import compute_fills
+from .fills import compute_fills, flow_features
 from .gecko import GeckoTerminal
 from .jsonl import JsonlWriter
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import Store, hour_key
-from .survivor import compute_metrics, latest_by_mint
-from .swaps import SwapFetcher
+from .survivor import FILLS_VERSION, compute_metrics, latest_by_mint
+from .swaps import SwapFetcher, encode_swaps, merge_swaps
 
 WSOL = "So11111111111111111111111111111111111111112"
 # pump.fun writes the system program id as quote_mint for SOL-quoted curves; older rows have None.
@@ -68,6 +69,8 @@ class Recorder:
         self.portal_log = JsonlWriter(d / "portal.jsonl", rotate_daily=True)
         self.migrations = JsonlWriter(d / "migrations.jsonl")
         self.survivor = JsonlWriter(d / "survivor.jsonl")
+        # every swap the harvester fetched per pool, so later hypotheses run offline without RPC
+        self.swaps_log = JsonlWriter(d / "swaps.jsonl", rotate_daily=True, compress_rotated=True)
         self.started = time.time()
         self.counts = {
             "create": 0,
@@ -99,6 +102,16 @@ class Recorder:
             "swaps_fetched": 0,
             "credits_today": 0,
             "fills_paused": False,
+            "gtfa": None,  # getTransactionsForAddress available (Helius) or fell back
+            "gtfa_error": None,
+            "replay_windows": 0,
+            "window_incomplete": 0,
+            "windows_with_breaks": 0,  # complete windows whose swaps do not chain: missing swaps
+            "flow_rows": 0,
+            "states_unresolved": 0,  # decision times whose newest swap was not found in the scan budget
+            "token_filter": None,  # Helius tokenTransfer filter: None unverified, True in use, False off
+            "token_filter_note": None,
+            "token_filter_checks": {},
         }
         self.fetcher: SwapFetcher | None = None
         self.task_errors: dict[str, dict[str, Any]] = {}  # loop name -> last crash, for the status page
@@ -560,6 +573,10 @@ class Recorder:
             if not pool:
                 metrics["reason"] = "no_pool"  # neither the chain nor Gecko knows a pool for this mint
             if fills_on and pool and row.get("quote_mint") in SOL_QUOTES:
+                if hs["credits_today"] >= self.cfg.fills_daily_credits:
+                    hs["fills_paused"] = True
+                    hs["last_error"] = "fills: daily RPC credit budget reached; harvesting resumes tomorrow"
+                    break  # the rest of the batch waits for tomorrow's budget
                 try:
                     await self._add_fills(metrics, row, pool, t0, now)
                 except httpx.HTTPError as exc:
@@ -595,29 +612,79 @@ class Recorder:
     def _credits_key(now: float) -> str:
         return "credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))
 
+    @staticmethod
+    def _parse_cell(key: str) -> tuple[int, int] | None:
+        m = re.fullmatch(r"d(\d+)_h(\d+)", key)
+        return (int(m.group(1)), int(m.group(2))) if m else None
+
     async def _add_fills(
         self, metrics: dict[str, Any], row: dict[str, Any], pool: str, t0: int, now: float
     ) -> None:
-        """Swap-level executable fills for one pool; spends RPC credits, which are metered per day."""
+        """Swap-level executable fills for one pool; spends RPC credits, which are metered per day.
+
+        Reads: one complete window of every swap around the replay cells when it fits its cap
+        (else a 5-minute window before each replayed entry, for the order-flow features), and the
+        pool state at every other entry/exit time. Everything fetched is also appended to the
+        swaps dataset."""
+        assert self.fetcher is not None
+        f = self.fetcher
+        spent = f.credits
+        try:
+            await self._fills_for(metrics, row, pool, t0, now)
+        finally:
+            # every credit is metered, also those of a pool that failed half-way and will be retried
+            hs = self.harvest_stats
+            hs["credits_today"] = self.store.incr_kv(self._credits_key(now), f.credits - spent)
+
+    async def _fills_for(
+        self, metrics: dict[str, Any], row: dict[str, Any], pool: str, t0: int, now: float
+    ) -> None:
         assert self.fetcher is not None
         cfg = self.cfg
+        f = self.fetcher
+        spent = f.credits
+        lat = cfg.fill_latency_s
+        mint = row["mint"]
         t_mig = int(row.get("chain_ts") or t0)
-        full_until = t_mig + cfg.fills_full_window_min * 60
-        points = sorted(
-            {
-                t_mig + (d + h) * 60 + cfg.fill_latency_s
-                for d in cfg.entry_delays_min
-                for h in cfg.horizons_min
-            }
-            | {t_mig + d * 60 + cfg.fill_latency_s for d in cfg.entry_delays_min}
-        )
-        # every decision time is a point: when the full window is capped (a very busy pool), the
-        # entry/exit states inside it still get their own transaction instead of a stale one
-        swaps, sw = await self.fetcher.fetch(pool, t_mig, full_until, cfg.fills_max_swaps, points)
-        hs = self.harvest_stats
-        hs["credits_today"] = self.store.incr_kv(self._credits_key(now), sw["credits"])
-        hs["swaps_fetched"] += sw["swaps"]
-        metrics["swaps"] = sw
+        cells = [(d, h) for d in cfg.entry_delays_min for h in cfg.horizons_min]
+        replay = [c for c in (self._parse_cell(k) for k in cfg.fills_replay_cells) if c]
+        replay = [(d, h) for d, h in replay if t_mig + (d + h) * 60 + lat <= now]
+
+        window: list = []
+        wst: dict[str, Any] | None = None
+        w_from = w_to = 0
+        if replay:
+            w_from = min(t_mig + d * 60 for d, _ in replay) - cfg.fills_flow_s
+            w_to = max(t_mig + (d + h) * 60 for d, h in replay) + int(lat) + 1
+            window, wst = await f.window(
+                pool, w_from, w_to, cfg.fills_replay_max_tx, mint=mint, floor_ts=t_mig - 60
+            )
+        covered = (w_from, wst["covered_to"]) if wst else None
+
+        flows: dict[str, Any] = {}
+        flow_swaps: list = []
+        flow_stats: dict[str, Any] = {}
+        for d in sorted({d for d, _ in replay}):
+            t_e = int(t_mig + d * 60 + lat)
+            lo, hi = t_e - cfg.fills_flow_s, t_e
+            if covered and covered[0] <= lo and hi <= covered[1]:
+                flows[f"d{d}"] = flow_features(window, t_e, cfg.fills_flow_s)
+                continue
+            fw, fst = await f.window(pool, lo, hi, cfg.fills_flow_max_tx, mint=mint, floor_ts=t_mig - 60)
+            flow_stats[f"d{d}"] = fst
+            if fst["complete"]:
+                flows[f"d{d}"] = flow_features(fw, t_e, cfg.fills_flow_s)
+                flow_swaps.extend(fw)
+
+        times = {t_mig + d * 60 + lat for d, _ in cells} | {t_mig + (d + h) * 60 + lat for d, h in cells}
+        times = {t for t in times if t <= now}
+        if covered:
+            times = {t for t in times if not (covered[0] <= t <= covered[1])}
+            times.add(w_from - 1)  # the pool state as the window opens
+        points, pst = await f.states(pool, sorted(times), t_mig - 60, mint=mint)
+        swaps = merge_swaps(window, flow_swaps, points)
+        credits = f.credits - spent
+
         metrics["fills"] = compute_fills(
             swaps,
             t_mig,
@@ -625,25 +692,68 @@ class Recorder:
             cfg.horizons_min,
             cfg.fill_sizes_sol,
             cfg.fill_tx_fee_sol,
-            cfg.fill_latency_s,
+            lat,
+            now=now,
+            replay_swaps=window if wst else None,
+            replay_range=covered,
+        )
+        metrics["flow"] = flows
+        metrics["fills_version"] = FILLS_VERSION
+        metrics["fills_t0"] = t_mig
+        metrics["swaps"] = {
+            "window": wst,
+            "flow_windows": flow_stats,
+            "states": pst,
+            "swaps": len(swaps),
+            "credits": credits,
+        }
+        self.swaps_log.write(
+            {
+                "mint": mint,
+                "pool": pool,
+                "t_mig": t_mig,
+                "window": [w_from, w_to] if wst else None,
+                "window_stats": wst,
+                "flow_windows": flow_stats,
+                "states": pst,
+                "swaps": encode_swaps(swaps),
+            },
             now=now,
         )
-        metrics["fills_t0"] = t_mig
+        hs = self.harvest_stats
+        hs["swaps_fetched"] += len(swaps)
+        hs["gtfa"] = f.gtfa
+        hs["gtfa_error"] = f.gtfa_error
+        hs["token_filter"] = f.token_filter
+        hs["token_filter_note"] = f.filter_note
+        hs["token_filter_checks"] = dict(f.filter_checks)
+        if wst:
+            hs["replay_windows"] += 1
+            if not wst["complete"]:
+                hs["window_incomplete"] += 1
+            if wst["complete"] and wst["chain_breaks"]:
+                hs["windows_with_breaks"] += 1
+        hs["flow_rows"] += bool(flows)
+        hs["states_unresolved"] += pst["unresolved"]
         if swaps:
             hs["fills_rows"] += 1
 
     def requeue_for_fills(self) -> int:
-        """Once per deployment: rows harvested before fills existed go through the harvester again."""
-        if not self.cfg.fills_enabled or self.store.get_kv("fills_requeued_v1"):
+        """Once per fills version: rows harvested under an older execution model (or none) go
+        through the harvester again, so every summary row is computed the same way."""
+        flag = f"fills_requeued_v{FILLS_VERSION}"
+        if not self.cfg.fills_enabled or self.store.get_kv(flag):
             return 0
         rows = latest_by_mint(self.store.survivor_rows())
         mints = [
             r["mint"]
             for r in rows
-            if r.get("pool") and not r.get("fills") and r.get("quote_mint") in SOL_QUOTES
+            if r.get("pool")
+            and r.get("quote_mint") in SOL_QUOTES
+            and (r.get("fills_version") or (1 if r.get("fills") else 0)) < FILLS_VERSION
         ]
         n = self.store.requeue(mints)
-        self.store.set_kv("fills_requeued_v1", str(int(time.time())))
+        self.store.set_kv(flag, str(int(time.time())))
         return n
 
     async def run_harvester(self, client: httpx.AsyncClient) -> None:
@@ -718,7 +828,12 @@ class Recorder:
                 )
             print(f"[recorder] {self.prime_claims()} confirmed rows already in the registry")
             if self.rpc is not None and self.cfg.fills_enabled:
-                self.fetcher = SwapFetcher(self.rpc, max_pages=self.cfg.fills_max_pages)
+                self.fetcher = SwapFetcher(
+                    self.rpc,
+                    max_pages=self.cfg.fills_max_pages,
+                    scan_pages=self.cfg.fills_scan_pages,
+                    token_filter=self.cfg.fills_token_filter,
+                )
                 print(f"[recorder] {self.requeue_for_fills()} harvested rows re-queued for fills")
             tasks = [self._supervise("chain", self.run_chain), self._supervise("status", self.run_status)]
             if self.rpc is not None and self.cfg.rpc_poll:

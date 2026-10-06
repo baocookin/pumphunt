@@ -132,3 +132,26 @@ Kill criteria giữ nguyên (n≥300; KILL nếu median net ≤ −1.25% hoặc 
 * **Sau**: mô phỏng vị thế S SOL trên reserve thật của pool PumpSwap đọc từ event swap on‑chain (reserve trước swap, virtual quote reserve, phí lp/protocol/creator thực tế), vào ở trạng thái 3 giây sau quyết định, ra tương tự, trừ phí pool hai chiều và 0.001 SOL phí tx mỗi chiều. Ô chính: S = 1 SOL, T+30m, giữ 1h. Các cỡ 0.5/2/5 SOL báo kèm để thấy chi phí thanh khoản.
 
 Lý do: xác minh trên mainnet cho thấy pool có virtual quote reserve và thanh khoản thật có thể bị rút gần hết, khiến trượt giá thực tế cao hơn nhiều so với 3.5%. Thước đo theo nến vẫn được tính và hiển thị để đối chiếu, không dùng làm verdict.
+
+## Đo trên pool PumpSwap (06/10/2026): thực thi quyết định kết quả, và đo nó khó hơn tưởng
+
+**Số liệu sơ bộ (fills v1, 186 token đã harvest, 112 có khớp lệnh; lệnh 1 SOL, vào T+30, giữ 1h).** Sẽ được tính lại toàn bộ bằng fills v2 bên dưới; xem như định hướng, chưa phải kết luận.
+
+| Nhóm pool lúc vào | Tỉ lệ | Kết quả |
+|---|---|---|
+| Lúc tốt nghiệp nạp < 1 SOL thật vào pool | 20% số migration | Gần như không có thanh khoản, lỗ ~99% |
+| Pool bình thường nhưng không còn giao dịch | 41% pool bình thường | Chỉ mất phí |
+| Pool bình thường còn giao dịch | 59% | Giá trung vị −7.8%; 5/36 tăng quá phí khứ hồi 2.7% |
+
+Với pool bình thường, verdict không đổi theo cách mô hình hóa: bi quan (tác động giá của mình biến mất trước khi bán) trung vị −12.4%, thắng 5%; lạc quan (tác động giá giữ nguyên) −2.8%, thắng 8%. Cả hai là KILL.
+
+**Cơ chế pool phải mô hình đúng:**
+* Giá tính trên Q+V (SOL thật trong vault + virtual quote reserve có dấu, ~17.5 SOL ở pool mới) nhưng lệnh bán **không bao giờ nhận quá Q** (lỗi 6063 `InsufficientRealQuoteReserves`): pool bị rút hết SOL thật vẫn báo giá mà không ai thoát được. Mọi lệnh bán mô phỏng đều bị chặn ở Q.
+* Ba biến thể lệnh mua ghi event khác nhau. `buy`: `quote_amount_in` là SOL vào curve. `buy_exact_quote_in`: `quote_amount_in` là tổng người dùng trả, `user_quote_amount_in` mới là SOL vào curve, và token ra được tính trên đầu vào − 1 lamport. `buy_exact_quote_in_v2`: giữ lại trong vault mọi khoản phí trừ phần buyback; số phí này về sau bị rút ra ngoài bằng giao dịch không phải swap. Công thức chung: SOL vào curve = `quote_amount_in_with_lp_fee − lp_fee`. Đọc sai, mỗi lệnh mua exact‑in làm SOL của pool lệch thêm một khoản bằng tổng phí (~1.2% giá trị lệnh ở pool đo được), cộng dồn theo từng lệnh (đo: 40/53 lệnh mua ở một pool lớn là exact‑in).
+* Kiểm tra trên cửa sổ đầy đủ: phía token, swap sau luôn bắt đầu đúng ở trạng thái swap trước để lại (0 lệch trên mọi cửa sổ đã đo); phía SOL có những lần rút phí ngoài swap. Bộ đếm `chain_breaks` (phía token, nghĩa là thiếu swap) và `quote_gaps` (phía SOL, nghĩa là phí bị rút) tách hai chuyện này; mô hình replay áp cùng khoản rút đó vào pool giả định (thiếu bước này replay lạc quan giả ~1% ở pool 50 SOL).
+
+**Bot MEV làm "giao dịch cuối cùng trước thời điểm T" vô nghĩa.** Ở pool sôi động, 95/100 giao dịch thành công chạm pool là bot đọc giá rồi thoát, không swap; chúng tham chiếu cả pool, hai vault, mint và vault phí creator, nên không địa chỉ nào lọc được. Hệ quả với fills v1: trạng thái tại mốc vào/ra có thể là của một swap cũ hàng phút (một pool đang có ~3 swap/giây bị ghi "idle 242s"). Fills v2 quét lùi từ mỗi mốc đến khi gặp swap thật.
+
+**Phân bố số giao dịch** trong cửa sổ T+25 → T+121 phút (40 pool ngẫu nhiên): trung vị 13, p75 389, p90 7,041, lớn nhất > 31,000. Đa số pool gần như chết; chi phí đọc tập trung ở ~10–15% pool sôi động, cũng là nhóm duy nhất có thể giao dịch được. Trần 15,000 tx/cửa sổ đọc trọn ~93% pool, trung bình ~200 credit/pool (Helius: 0.1 credit/tx). Bộ lọc `tokenTransfer` của Helius (giữ giao dịch có chuyển token của pool) có thể bỏ được nhiễu bot; recorder chỉ bật nó sau khi so cạnh nhau với trang không lọc và thấy nó giữ đủ mọi swap (RPC công khai bỏ qua bộ lọc này).
+
+**Thay đổi phương pháp (fills v2, mọi dòng được tính lại):** trạng thái ở mốc vào/ra = swap mới nhất trước mốc (quét lùi); cửa sổ đầy đủ quanh T+30→T+90 và T+60→T+120 khi vừa trần, cho mô hình replay và order flow 5 phút trước khi vào; ba mô hình ghost/persist/replay báo song song, replay là ước lượng chính khi có. Verdict vẫn theo tiêu chí đã đăng ký.

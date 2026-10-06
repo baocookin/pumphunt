@@ -161,30 +161,64 @@ _SURVIVOR_COLS = [
 ]
 
 
-def survivor_csv(rows, delays, horizons, sizes=()) -> str:
-    """One row per token (latest harvest), one column group per (entry delay, horizon) cell for
-    the candle marks, then the executable net per position size, then swap coverage."""
+# Per primary-cell detail of the executable model: what was observable at entry and how each
+# execution model scored the trade.
+_FILL_DETAIL = [
+    "model",
+    "net_ghost",
+    "net_replay",
+    "net_persist",
+    "real_in_sol",
+    "virtual_in_sol",
+    "liquidity_in_sol",
+    "last_trade_age_in_s",
+    "exit_stale_s",
+    "impact_in",
+    "exit_capped",
+    "mdd",
+]
+_FLOW = ["swaps", "buys", "sells", "traders", "buyers", "net_sol", "top_seller_share", "creator_sell_sol"]
+
+
+def survivor_csv(
+    rows, delays, horizons, sizes=(), detail_cell: str = "d30_h60", flow_entry: str = "d30"
+) -> str:
+    """One row per token (latest harvest): candle marks per cell, executable net per size and
+    cell, the detail of `detail_cell` per size, order flow before `flow_entry`, swap coverage."""
     cells = [f"d{d}_h{h}" for d in delays for h in horizons]
     buf = io.StringIO()
     w = csv.writer(buf)
-    head = _SURVIVOR_COLS + [f"{c}_{m}" for c in cells for m in ("net", "gross", "mdd", "exit_stale_s")]
-    head += [f"fill{size_key(s)}_{c}_net" for s in sizes for c in cells] + [
-        "swaps_fetched",
-        "swaps_window_truncated",
-    ]
+    head = _SURVIVOR_COLS + ["fills_version"]
+    head += [f"{c}_{m}" for c in cells for m in ("net", "gross", "mdd", "exit_stale_s")]
+    head += [f"fill{size_key(s)}_{c}_net" for s in sizes for c in cells]
+    head += [f"fill{size_key(s)}_{detail_cell}_{m}" for s in sizes for m in _FILL_DETAIL]
+    head += [f"flow_{flow_entry}_{m}" for m in _FLOW]
+    head += ["swaps_fetched", "window_method", "window_complete", "window_chain_breaks"]
+    head += ["states_unresolved", "swap_credits"]
     w.writerow(head)
     for r in latest_by_mint(rows):
-        line = [r.get(k) for k in _SURVIVOR_COLS]
+        line = [r.get(k) for k in _SURVIVOR_COLS] + [r.get("fills_version")]
         for c in cells:
             cell = (r.get("cells") or {}).get(c) or {}
             line += [cell.get("net"), cell.get("gross"), cell.get("mdd"), cell.get("exit_stale_s")]
         fills = r.get("fills") or {}
+
+        def fill(c: str, sz: float, fills: dict = fills) -> dict:
+            by_size = fills.get(c) or {}
+            return by_size.get(size_key(sz)) or by_size.get(str(float(sz))) or {}
+
         for s in sizes:
             for c in cells:
-                by_size = fills.get(c) or {}
-                line.append((by_size.get(size_key(s)) or by_size.get(str(float(s))) or {}).get("net"))
+                line.append(fill(c, s).get("net"))
+        for s in sizes:
+            d = fill(detail_cell, s)
+            line += [d.get(m) for m in _FILL_DETAIL]
+        fl = (r.get("flow") or {}).get(flow_entry) or {}
+        line += [fl.get(m) for m in _FLOW]
         sw = r.get("swaps") or {}
-        line += [sw.get("swaps"), sw.get("window_truncated")]
+        win = sw.get("window") or {}
+        line += [sw.get("swaps"), win.get("method"), win.get("complete"), win.get("chain_breaks")]
+        line += [(sw.get("states") or {}).get("unresolved"), sw.get("credits")]
         w.writerow(line)
     return buf.getvalue()
 

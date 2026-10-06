@@ -19,6 +19,8 @@ from typing import Any
 from .fills import size_key
 from .gecko import Candle
 
+FILLS_VERSION = 2  # execution model of rows in the fills tables; older rows are re-harvested
+
 
 def _last_candle(candles: Sequence[Candle], t: int) -> Candle | None:
     """Last candle starting at or before t (None if the pool had no trade yet)."""
@@ -150,7 +152,14 @@ def summarize(
         if r.get("no_data"):
             reason = str(r.get("reason") or "unknown")
             no_data[reason] = no_data.get(reason, 0) + 1
-    # executable fills: same grid, one table per position size, net of impact and fees
+    # executable fills: same grid, one table per position size. Only rows computed with the
+    # current execution model count, so the table never mixes model versions.
+    frows = [r for r in rows if r.get("fills") and (r.get("fills_version") or 1) >= FILLS_VERSION]
+
+    def fill_cell(r: dict[str, Any], key: str, key_s: str, size: float) -> dict[str, Any] | None:
+        by_size = (r.get("fills") or {}).get(key) or {}
+        return by_size.get(key_s) or by_size.get(str(float(size)))  # rows written as "1.0"
+
     fills: dict[str, dict[str, dict[str, Any]]] = {}
     for size in sizes_sol:
         key_s = size_key(size)
@@ -159,17 +168,20 @@ def summarize(
             for h in horizons_min:
                 key = f"d{d}_h{h}"
                 nets = []
-                for r in rows:
-                    by_size = (r.get("fills") or {}).get(key) or {}
-                    cell = by_size.get(key_s) or by_size.get(str(float(size)))  # rows written as "1.0"
+                for r in frows:
+                    cell = fill_cell(r, key, key_s, size)
                     if cell and cell.get("net") is not None:
                         nets.append(cell["net"])
                 fills[key_s][key] = _cell_stats(nets)
     primary_size = "1" if "1" in fills else next(iter(fills), None)
+    primary_cell = "d30_h60"
+    psize = float(primary_size) if primary_size else 1.0
+    pcells = [c for r in frows if (c := fill_cell(r, primary_cell, primary_size or "1", psize))]
     return {
         "harvested": harvested,
         "with_data": with_data,
-        "with_fills": sum(1 for r in rows if r.get("fills")),
+        "with_fills": len(frows),
+        "fills_version": FILLS_VERSION,
         "no_data": no_data,
         "alive_24h_rate": (alive / with_data) if with_data else 0.0,
         "cells": cells,
@@ -177,7 +189,47 @@ def summarize(
         "fills": fills,
         "fill_primary_size": primary_size,
         # the verdict that answers "would a 1 SOL position have made money": executable, not marked
-        "verdict_fill": verdict((fills.get(primary_size) or {}).get("d30_h60", {"n": 0})),
+        "verdict_fill": verdict((fills.get(primary_size) or {}).get(primary_cell, {"n": 0})),
+        "fill_models": execution_models(pcells),
+        "fill_strata": strata(pcells),
+    }
+
+
+def execution_models(cells: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The verdict cell under each execution model, on the rows where that model was computed."""
+    out: dict[str, Any] = {}
+    for name in ("net_ghost", "net_replay", "net_persist"):
+        vals = [c[name] for c in cells if c.get(name) is not None]
+        out[name] = {
+            k: v for k, v in _cell_stats(vals).items() if k in ("n", "median", "win_rate", "p10", "p90")
+        }
+    out["exit_capped_share"] = (sum(1 for c in cells if c.get("exit_capped")) / len(cells)) if cells else 0.0
+    out["replayed_share"] = (
+        (sum(1 for c in cells if c.get("model") == "replay") / len(cells)) if cells else 0.0
+    )
+    return out
+
+
+REAL_SOL_BUCKETS = [(0.0, 1.0, "<1"), (1.0, 5.0, "1-5"), (5.0, 20.0, "5-20"), (20.0, float("inf"), ">=20")]
+IDLE_BUCKETS = [(0.0, 60.0, "<1m"), (60.0, 600.0, "1-10m"), (600.0, float("inf"), ">=10m")]
+
+
+def strata(cells: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Descriptive splits of the verdict cell by what was observable at entry: real SOL in the
+    vault and minutes since the pool last traded. Exploratory only: these splits were chosen
+    after seeing data, so they suggest hypotheses, they do not test them."""
+
+    def split(field: str, buckets: list[tuple[float, float, str]]) -> list[dict[str, Any]]:
+        res = []
+        for lo, hi, label in buckets:
+            vals = [c["net"] for c in cells if c.get(field) is not None and lo <= c[field] < hi]
+            st = _cell_stats(vals)
+            res.append({"bucket": label, **{k: st.get(k) for k in ("n", "median", "win_rate", "p90")}})
+        return res
+
+    return {
+        "real_in_sol": split("real_in_sol", REAL_SOL_BUCKETS),
+        "idle_at_entry": split("last_trade_age_in_s", IDLE_BUCKETS),
     }
 
 
