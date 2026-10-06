@@ -109,7 +109,8 @@ async def debug_tx(signature: str):
     url = settings.solana_http_url or http_url_from_ws(settings.solana_ws_url)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            tx = await SolanaRpc(client, url).get_transaction(signature)
+            rpc = SolanaRpc(client, url, max_tx_version=settings.rpc_max_tx_version)
+            tx = await rpc.get_transaction(signature)
     except httpx.HTTPError as exc:
         return {"signature": signature, "error": describe_http_error(exc)}
     return {"signature": signature, "migration": migration_from_tx(tx), "diagnostics": tx_diagnostics(tx)}
