@@ -942,7 +942,7 @@ class Recorder:
                 snapshots=self.snapshot_stats,
                 gecko=self.gecko.stats if self.gecko else None,
                 task_errors=self.task_errors,
-                loops={n: round(time.time() - t, 1) for n, t in self.beats.items()},  # seconds since progress
+                loops=self.loop_ages(),
                 mentions=self.mentions(),
             )
             await asyncio.sleep(5)
@@ -985,6 +985,13 @@ class Recorder:
                     f"[recorder] {name} crashed ({type(exc).__name__}: {exc}); restarting in {restart_s:.0f}s"
                 )
             await asyncio.sleep(restart_s)
+
+    def loop_ages(self, now: float | None = None) -> dict[str, float]:
+        """Seconds since each watched loop last made progress (the feeds watch their own sockets)."""
+        now = now or time.time()
+        return {
+            n: round(now - self.beats.get(n, now), 1) for n, (_, stall_s) in self._loops.items() if stall_s
+        }
 
     def check_stalls(self, now: float | None = None) -> list[str]:
         """Cancel every supervised loop that has not beaten within its `stall_s`."""

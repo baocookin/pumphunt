@@ -853,6 +853,7 @@ def test_a_stalled_loop_is_cancelled_and_restarted_and_shutdown_still_works(rec)
         sup = asyncio.create_task(rec._supervise("stuck", hangs, restart_s=0, stall_s=10))
         await asyncio.sleep(0.01)
         assert len(starts) == 1 and rec.check_stalls(now=time.time() + 5) == []  # still fresh
+        assert set(rec.loop_ages()) == {"stuck"}  # only watched loops are reported
         assert rec.check_stalls(now=time.time() + 60) == ["stuck"]
         await asyncio.sleep(0.05)
         assert len(starts) == 2 and "stalled" in rec.task_errors["stuck"]["last"]
