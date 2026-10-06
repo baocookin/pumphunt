@@ -10,12 +10,14 @@ import contextlib
 import time
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .recorder import Recorder
+from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import hour_key, make_store
 from .survivor import summarize
 
@@ -98,6 +100,18 @@ def survivor_summary():
 @api.get("/survivor/rows")
 def survivor_rows(limit: int = 200):
     return store.survivor_rows(min(limit, 5000))
+
+
+@api.get("/debug/tx/{signature}")
+async def debug_tx(signature: str):
+    """Fetch one transaction through the configured RPC and show how the recorder reads it."""
+    url = settings.solana_http_url or http_url_from_ws(settings.solana_ws_url)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            tx = await SolanaRpc(client, url).get_transaction(signature)
+    except httpx.HTTPError as exc:
+        return {"signature": signature, "error": describe_http_error(exc)}
+    return {"signature": signature, "migration": migration_from_tx(tx), "diagnostics": tx_diagnostics(tx)}
 
 
 @api.get("/config")

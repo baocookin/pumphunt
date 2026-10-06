@@ -11,6 +11,7 @@ from app.events import Event
 from app.gecko import Candle
 from app.jsonl import read_jsonl
 from app.recorder import Recorder
+from app.rpc import find_migrate_ix
 from app.store import MemoryStore, hour_key
 
 WA = fake_pubkey(777)
@@ -149,6 +150,7 @@ def test_rpc_confirmation_fills_pool_and_learns_authority(rec):
     assert row["pool"] == PK_B and row["slot"] == 4242 and row["source"] == "rpc"
     assert row["sol_amount"] == 85.0 and row["ts"] == t
     assert rec.rpc_stats["confirmed"] == 1 and rec.rpc_stats["withdraw_authority"] == WA
+    assert rec.rpc_stats["via"] == {"log": 1, "cpi": 0, "accounts": 0}
     # configured guess was wrong and the feed is silent -> re-subscribe to the learned address
     assert rec.learned_authority == WA and rec.feed.mentions == [WA]
     assert rec.store.counters("migrations_rpc", [hour_key(t)]) == {hour_key(t): 1}
@@ -176,6 +178,33 @@ def test_rpc_confirmation_retries_then_gives_up(rec):
     rec.feed = FakeFeed()
     assert asyncio.run(rec.confirm_migration("missing", 1.0, delays=(0, 0))) is False
     assert rec.rpc.calls == 2 and rec.rpc_stats["failed"] == 1
+
+
+def test_rpc_confirmation_survives_truncated_logs(rec):
+    t = 1_700_000_000.0
+    tx = fake_migrate_tx(PK_A, PK_B, WA, slot=9)
+    tx["meta"]["logMessages"] = ["Log truncated"]
+    acc = find_migrate_ix(tx)
+    rec.rpc = FakeRpc({"sig1": tx})
+    rec.feed = FakeFeed(notifications=0)
+    rec.on_portal(portal_mig(t, mint=acc["base_mint"], signature="sig1"))
+    assert asyncio.run(rec.confirm_migration("sig1", t, delays=(0,))) is True
+    row = rec.store.migrations()[0]
+    assert row["mint"] == acc["base_mint"] and row["pool"] == acc["pool"]
+    assert row["slot"] == 9 and row["source"] == "rpc" and row.get("sol_amount") is None
+    assert rec.rpc_stats["via"]["accounts"] == 1 and rec.learned_authority == WA
+
+
+def test_rpc_confirmation_records_why_a_tx_is_not_a_migration(rec):
+    tx = fake_migrate_tx(PK_A, PK_B, WA)
+    tx["meta"]["logMessages"] = ["Program log: nothing here"]
+    tx["transaction"]["message"]["instructions"] = []
+    rec.rpc = FakeRpc({"sig1": tx})
+    rec.feed = FakeFeed()
+    assert asyncio.run(rec.confirm_migration("sig1", 1.0, delays=(0,))) is False
+    assert rec.rpc_stats["no_event"] == 1 and rec.rpc_stats["confirmed"] == 0
+    diag = rec.rpc_stats["last_no_event"]
+    assert diag["signature"] == "sig1" and diag["found"] is True and diag["pump_ixs"] == []
 
 
 def test_harvest_waits_then_computes(rec):

@@ -22,7 +22,7 @@ from .events import Event
 from .feed import PumpPortalFeed
 from .gecko import GeckoTerminal
 from .jsonl import JsonlWriter
-from .rpc import SolanaRpc, http_url_from_ws, migration_from_tx
+from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import Store, hour_key
 from .survivor import compute_metrics
 
@@ -68,6 +68,8 @@ class Recorder:
             "failed": 0,
             "no_event": 0,
             "last_rpc_ts": 0.0,
+            "via": {"log": 0, "cpi": 0, "accounts": 0},
+            "last_no_event": None,
             "withdraw_authority": None,
             "authority_static": None,
             "migrate_ix": None,
@@ -184,7 +186,7 @@ class Recorder:
             try:
                 tx = await self.rpc.get_transaction(signature)
             except httpx.HTTPError as exc:
-                print(f"[rpc] getTransaction failed: {exc}")
+                print(f"[rpc] getTransaction failed: {describe_http_error(exc)}")
                 tx = None
             if tx:
                 break
@@ -194,6 +196,9 @@ class Recorder:
         info = migration_from_tx(tx)
         if info is None:
             self.rpc_stats["no_event"] += 1
+            diag = {"signature": signature, **tx_diagnostics(tx)}
+            self.rpc_stats["last_no_event"] = diag
+            print(f"[rpc] no migrate in {signature}: {diag}")
             return False
         row = self._migration_row(info["event"], seen_ts, info["slot"], signature, "rpc")
         if row["mint"] and row["pool"]:
@@ -202,6 +207,8 @@ class Recorder:
             self.store.incr("migrations_rpc", hour_key(seen_ts))
         self.rpc_stats["confirmed"] += 1
         self.rpc_stats["last_rpc_ts"] = time.time()
+        via = info["event"].get("via", "log")
+        self.rpc_stats["via"][via] = self.rpc_stats["via"].get(via, 0) + 1
         await self._learn_authority(info.get("accounts"))
         return True
 

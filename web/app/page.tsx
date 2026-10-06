@@ -6,7 +6,11 @@ import { useEffect, useState } from "react";
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api`;
 
 type ChainFeed = { connected?: boolean; connects?: number; subscribed?: number; notifications?: number; events?: number; last_error?: string | null; mentions?: string[] };
-type Rpc = { confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null };
+type NoEvent = { signature?: string; found?: boolean; log_truncated?: boolean; pump_ixs?: { name?: string | null; disc: string; inner: boolean }[]; events?: { kind: string; via: string }[] };
+type Rpc = {
+  confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; via?: Record<string, number>; last_no_event?: NoEvent | null;
+  withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null;
+};
 type Stats = {
   build_sha?: string;
   status: {
@@ -98,7 +102,18 @@ export default function Page() {
       <div className="tiles">
         <div className="tile"><div className="k">WebSocket</div><div className="v">{feed ? (feed.connected ? "connected" : "down") : "–"} <span className="k">· {feed?.connects ?? 0} lần nối · {feed?.subscribed ?? 0} sub</span></div><div className="k mono">{feed?.last_error ?? ""}</div></div>
         <div className="tile"><div className="k">Notification / event decode</div><div className="v">{feed?.notifications ?? 0} <span className="k">/ {feed?.events ?? 0}</span></div></div>
-        <div className="tile"><div className="k">RPC confirm (portal → getTransaction)</div><div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event</span></div></div>
+        <div className="tile">
+          <div className="k">RPC confirm (portal → getTransaction)</div>
+          <div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event</span></div>
+          <div className="k">{rpc?.via ? `nhận qua log ${rpc.via.log ?? 0} · cpi ${rpc.via.cpi ?? 0} · accounts ${rpc.via.accounts ?? 0}` : ""}</div>
+          {rpc?.last_no_event?.signature && (
+            <div className="k mono">
+              no‑event gần nhất: <a href={`https://solscan.io/tx/${rpc.last_no_event.signature}`} target="_blank" rel="noreferrer">{short(rpc.last_no_event.signature)}</a>
+              {" · "}log {rpc.last_no_event.log_truncated ? "bị cắt" : "đủ"}
+              {" · "}ix pump: {(rpc.last_no_event.pump_ixs ?? []).map((i) => i.name ?? i.disc.slice(0, 8)).join(", ") || "không có"}
+            </div>
+          )}
+        </div>
         <div className="tile"><div className="k">withdraw_authority ({rpc?.migrate_ix ?? "?"})</div><div className="v mono" style={{ fontSize: 13 }}>{rpc?.withdraw_authority ?? "chưa học"}</div><div className="k">{rpc?.authority_static === false ? "nạp qua lookup table — không subscribe được" : `đang subscribe: ${(stats?.status.mentions ?? []).map(short).join(", ")}`}</div></div>
       </div>
 
