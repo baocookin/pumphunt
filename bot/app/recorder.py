@@ -228,6 +228,8 @@ class Recorder:
             "mint_amount": d.get("mint_amount_ui"),
             "bonding_curve": d.get("bonding_curve"),
             "user": d.get("user"),
+            # Not every curve is SOL-quoted any more; sol_amount is in quote units for the others.
+            "quote_mint": d.get("quote_mint"),
             "source": source,
         }
 

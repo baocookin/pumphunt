@@ -24,7 +24,17 @@ def _merge_pool(existing: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]
     if existing.get("pool") or not row.get("pool"):
         return None
     merged = dict(existing)
-    for k in ("pool", "slot", "signature", "chain_ts", "sol_amount", "mint_amount", "bonding_curve", "user"):
+    for k in (
+        "pool",
+        "slot",
+        "signature",
+        "chain_ts",
+        "sol_amount",
+        "mint_amount",
+        "bonding_curve",
+        "user",
+        "quote_mint",
+    ):
         if row.get(k) is not None:
             merged[k] = row[k]
     merged["source"] = row.get("source", merged.get("source"))

@@ -168,7 +168,7 @@ def test_rpc_confirmation_fills_pool_and_learns_authority(rec):
     assert asyncio.run(rec.confirm_migration("sig1", t, delays=(0,))) is True
     row = rec.store.migrations()[0]
     assert row["pool"] == PK_B and row["slot"] == 4242 and row["source"] == "rpc"
-    assert row["sol_amount"] == 85.0 and row["ts"] == t
+    assert row["sol_amount"] == 85.0 and row["ts"] == t and row["quote_mint"] == PK_B
     assert rec.rpc_stats["confirmed"] == 1 and rec.rpc_stats["withdraw_authority"] == WA
     assert rec.rpc_stats["via"] == {"log": 1, "cpi": 0, "accounts": 0}
     assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}

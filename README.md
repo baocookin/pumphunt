@@ -112,3 +112,12 @@ Chạy `python -m app.analyze data/survivor.jsonl --cost_bps 500` để xem kế
 ## Pháp lý (Việt Nam)
 
 Nghị định 284/2026/NĐ‑CP (16/7/2026, hiệu lực 1/9/2026): cá nhân giao dịch tài sản mã hóa không qua tổ chức được Bộ Tài chính cấp phép bị phạt 30–50 triệu VND; thu thập/bán dữ liệu tài khoản trái phép 150–200 triệu. Repo này **chỉ ghi dữ liệu công khai on‑chain và không đặt lệnh**. Hỏi luật sư trước khi (a) giao dịch thật từ VN hoặc (b) bán dữ liệu có thông tin ví.
+
+## Đo thực tế (06/10/2026, 145 tx migrate từ RPC công khai)
+
+* On‑chain có ≈ **67 migration pump.fun / giờ**; PumpPortal chỉ relay ≈ 35/giờ và ≈3% message ghép sai mint vào signature. Không được dùng PumpPortal làm nguồn đếm.
+* Authority ký ≈100 tx/giờ, 1/3 thất bại (nhiều bot đua gọi `migrate`, permissionless: 53 ví ký khác nhau, ví lớn nhất 32%). Không có keeper cố định để subscribe.
+* `migrate_v2` chiếm 94%; ở 46% tx authority được nạp qua lookup table nên `logsSubscribe` không thấy. `getSignaturesForAddress` liệt kê đủ 100% → poller là nguồn chính.
+* Event `CompletePumpAmmMigrationEvent`: trong log 31%, chỉ qua self‑CPI 66%, chỉ còn account của instruction 3% (bản `migrate` cũ, log bị cắt). Decoder cần cả ba đường.
+* Một số curve quote bằng stablecoin (`sol_amount` ≈ 0.02): lọc theo `quote_mint` khi phân tích.
+
