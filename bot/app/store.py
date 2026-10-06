@@ -120,8 +120,10 @@ class MemoryStore:
         return len(self._migrations)
 
     def pending_harvest(self, before_ts: float, limit: int) -> list[dict[str, Any]]:
+        """Rows due for harvest, newest first: fresh rows (the confirmatory sample, rows whose
+        holder snapshots wait in the store) never queue behind a re-computation backlog."""
         rows = [r for r in self._migrations.values() if not r["harvested"] and r["ts"] <= before_ts]
-        return sorted(rows, key=lambda r: r["ts"])[:limit]
+        return sorted(rows, key=lambda r: r["ts"], reverse=True)[:limit]
 
     def pending_counts(self, before_ts: float) -> tuple[int, int]:
         """(rows due for harvest now, rows not harvested yet at all)."""
@@ -256,7 +258,7 @@ class RedisStore:
         return self.r.hlen(self.K_MIG)
 
     def pending_harvest(self, before_ts: float, limit: int) -> list[dict[str, Any]]:
-        mints = self.r.zrangebyscore(self.K_PENDING, "-inf", before_ts, start=0, num=limit)
+        mints = self.r.zrevrangebyscore(self.K_PENDING, before_ts, "-inf", start=0, num=limit)
         if not mints:
             return []
         return [json.loads(v) for v in self.r.hmget(self.K_MIG, mints) if v]

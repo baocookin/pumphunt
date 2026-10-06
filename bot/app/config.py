@@ -92,9 +92,10 @@ class Settings(BaseSettings):
     fills_token_filter: bool = True  # try Helius' tokenTransfer filter; used only once verified
     fills_max_pages: int = 40  # signature pages (1,000 each), only without getTransactionsForAddress
     # RPC credits all research reads (fills, curve history, holders, funding) may spend per UTC
-    # day; the harvester pauses until the next day once reached. 270k/day is ~8.1M/month,
-    # inside the Developer plan's 10M with room for the recorder itself (~5k/day).
-    fills_daily_credits: int = 270_000
+    # day; the harvester pauses until the next day once reached. Measured: ~150 credits of fills
+    # + ~40 of curve history per token, ~1,200 graduates a day. 300k/day is ~9M/month, inside
+    # the Developer plan's 10M with room for the recorder itself (~5k/day).
+    fills_daily_credits: int = 300_000
     fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction

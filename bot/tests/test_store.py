@@ -38,6 +38,8 @@ def test_migrations_merge_and_harvest_queue(store):
     assert store.add_migration(row("B", 200, pool="Q")) == "new"
     assert store.migration_count() == 2 and [r["mint"] for r in store.migrations()] == ["B", "A"]
     assert [r["mint"] for r in store.pending_harvest(150, 10)] == ["A"]
+    assert [r["mint"] for r in store.pending_harvest(1_000, 10)] == ["B", "A"]  # newest first
+    assert [r["mint"] for r in store.pending_harvest(1_000, 1)] == ["B"]
     assert store.pending_counts(150) == (1, 2)
     store.mark_harvested("A", {"mint": "A", "pool": "P", "x": 1})
     assert store.pending_counts(1_000) == (1, 1) and store.survivor_rows()[-1]["x"] == 1
