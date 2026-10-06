@@ -505,14 +505,27 @@ class Recorder:
     async def harvest_once(self, gecko: GeckoTerminal, now: float | None = None) -> int:
         now = now or time.time()
         hs = self.harvest_stats
-        rows = self.store.pending_harvest(now - self.cfg.harvest_after_s, self.cfg.harvest_batch)
+        cutoff = now - self.cfg.harvest_after_s
+        hs["due"], hs["pending"] = self.store.pending_counts(cutoff)
+        rows = self.store.pending_harvest(cutoff, self.cfg.harvest_batch)
+        # Current pool info for the whole batch in one or two calls (30 pools per call) instead of
+        # one call per row: Gecko's per-IP budget is the harvester's bottleneck.
+        infos: dict[str, dict[str, Any]] = {}
+        known = [r["pool"] for r in rows if r.get("pool")]
+        if known:
+            try:
+                infos = await gecko.pools_info_multi(known)
+            except httpx.HTTPError as exc:
+                hs["last_error"] = f"pools_info_multi: {type(exc).__name__}"
         done = 0
         for row in rows:
             t0 = int(row["ts"])
             try:
                 pool = row.get("pool") or await gecko.resolve_pool(row["mint"])
                 candles = await gecko.candles_between(pool, t0 - 60, t0 + 24 * 3600 + 60) if pool else []
-                info = await gecko.pool_info(pool) if pool else None
+                info = infos.get(pool) if pool else None
+                if pool and info is None and not row.get("pool"):
+                    info = await gecko.pool_info(pool)  # pool only just resolved: not in the batch call
             except httpx.HTTPError as exc:
                 hs["last_error"] = f"{row['mint'][:6]}: {type(exc).__name__}"
                 print(f"[harvest] {row['mint'][:6]} http error {type(exc).__name__}; retry next cycle")
@@ -546,10 +559,10 @@ class Recorder:
             key = metrics.get("reason") if metrics.get("no_data") else "with_data"
             hs[key] = hs.get(key, 0) + 1
             done += 1
+            hs["due"], hs["pending"] = self.store.pending_counts(cutoff)
         hs["runs"] += 1
         hs["last_run_ts"] = now
         hs["rows_last_run"] = done
-        hs["due"], hs["pending"] = self.store.pending_counts(now - self.cfg.harvest_after_s)
         return done
 
     async def run_harvester(self, client: httpx.AsyncClient) -> None:

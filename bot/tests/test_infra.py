@@ -139,9 +139,10 @@ def test_gecko_raises_after_persistent_rate_limits_and_counts_calls(monkeypatch)
     from app.gecko import GeckoTerminal
 
     class Resp:
-        def __init__(self, status, payload=None):
+        def __init__(self, status, payload=None, headers=None):
             self.status_code = status
             self._p = payload
+            self.headers = headers or {}
 
         def raise_for_status(self):
             if self.status_code >= 400:
@@ -156,12 +157,34 @@ def test_gecko_raises_after_persistent_rate_limits_and_counts_calls(monkeypatch)
     class Client:
         def __init__(self, codes):
             self.codes = list(codes)
+            self.urls = []
 
         async def get(self, url, params=None, headers=None):
+            self.urls.append(url)
             code = self.codes.pop(0)
-            return Resp(code, {"data": {"attributes": {"reserve_in_usd": "1"}}} if code == 200 else None)
+            if "/pools/multi/" in url and code == 200:
+                addrs = url.rsplit("/", 1)[1].split(",")
+                return Resp(
+                    200,
+                    {
+                        "data": [
+                            {"attributes": {"address": a, "reserve_in_usd": str(i)}}
+                            for i, a in enumerate(addrs)
+                        ]
+                    },
+                )
+            return Resp(
+                code,
+                {"data": {"attributes": {"reserve_in_usd": "1"}}} if code == 200 else None,
+                {"retry-after": "7"},
+            )
 
-    monkeypatch.setattr("app.gecko.asyncio.sleep", _no_sleep)
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr("app.gecko.asyncio.sleep", fake_sleep)
     g = GeckoTerminal(Client([429, 429, 429, 429]), "https://g", rpm=100_000)
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(g.pool_info("P"))
@@ -170,6 +193,18 @@ def test_gecko_raises_after_persistent_rate_limits_and_counts_calls(monkeypatch)
     assert asyncio.run(g.pool_info("P")) == {"reserve_in_usd": "1"}
     assert asyncio.run(g.pool_info("Q")) is None
     assert g.stats == {"calls": 3, "rate_limited": 1, "not_found": 1, "errors": 0}
+    assert 7.0 in slept  # Retry-After honoured (the other sleeps are the per-minute pacer)
+    # multi: 30 pools per call, keyed by address
+    c = Client([200, 200])
+    g = GeckoTerminal(c, "https://g", rpm=100_000)
+    pools = [f"P{i}" for i in range(31)]
+    info = asyncio.run(g.pools_info_multi(pools))
+    assert (
+        len(c.urls) == 2
+        and c.urls[0].endswith("/pools/multi/" + ",".join(pools[:30]))
+        and c.urls[1].endswith("/pools/multi/P30")
+    )
+    assert info["P0"]["reserve_in_usd"] == "0" and info["P30"]["reserve_in_usd"] == "0" and len(info) == 31
 
 
 async def _no_sleep(_s):

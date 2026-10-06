@@ -79,7 +79,12 @@ class GeckoTerminal:
                 return None
             if r.status_code == 429:
                 self.stats["rate_limited"] += 1
-                await asyncio.sleep(10 * (attempt + 1))
+                retry_after = r.headers.get("retry-after") if hasattr(r, "headers") else None
+                try:
+                    wait = float(retry_after) if retry_after else 5.0 * 2**attempt
+                except ValueError:
+                    wait = 5.0 * 2**attempt
+                await asyncio.sleep(min(wait, 60.0))
                 continue
             if r.status_code >= 400:
                 self.stats["errors"] += 1
@@ -93,6 +98,18 @@ class GeckoTerminal:
     async def pool_info(self, pool: str, network: str = "solana") -> dict[str, Any] | None:
         data = await self._get(f"/networks/{network}/pools/{pool}")
         return (data or {}).get("data", {}).get("attributes") if data else None
+
+    async def pools_info_multi(self, pools: list[str], network: str = "solana") -> dict[str, dict[str, Any]]:
+        """Attributes for up to 30 pools per call, keyed by pool address: one call instead of thirty."""
+        out: dict[str, dict[str, Any]] = {}
+        for i in range(0, len(pools), 30):
+            chunk = pools[i : i + 30]
+            data = await self._get(f"/networks/{network}/pools/multi/{','.join(chunk)}")
+            for p in (data or {}).get("data") or []:
+                attrs = p.get("attributes") or {}
+                if attrs.get("address"):
+                    out[attrs["address"]] = attrs
+        return out
 
     async def token_pools(self, mint: str, network: str = "solana") -> list[dict[str, Any]]:
         data = await self._get(f"/networks/{network}/tokens/{mint}/pools")
