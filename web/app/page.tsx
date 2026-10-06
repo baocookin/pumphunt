@@ -21,6 +21,7 @@ type Stats = {
   status: {
     now?: number; last_chain_ts?: number; last_portal_ts?: number; counts?: Record<string, number>;
     chain_feed?: ChainFeed | null; portal_feed?: PortalFeed | null; portal_pools?: Record<string, number>; rpc?: Rpc | null; mentions?: string[];
+    harvest?: Harvest | null; gecko?: Gecko | null;
   };
   chain_scope: "migrations" | "full";
   creates_24h: number;
@@ -32,10 +33,14 @@ type Stats = {
   migrations_total: number;
   hourly: { hour: string; creates_chain: number; creates_portal: number; migrations: number; migrations_portal: number }[];
 };
-type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; harvested: boolean; source?: string };
+type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; quote_mint?: string | null; harvested: boolean; source?: string };
+const WSOL = "So11111111111111111111111111111111111111112";
 type Cell = { n: number; median?: number; win_rate?: number; top2pct_share?: number; p10?: number; p90?: number };
+type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number };
+type Gecko = { calls?: number; rate_limited?: number; not_found?: number; errors?: number };
+type DataFile = { name: string; bytes: number; mtime: number };
 type Summary = {
-  harvested: number; with_data: number; alive_24h_rate: number;
+  harvested: number; with_data: number; alive_24h_rate: number; no_data?: Record<string, number>;
   cells: Record<string, Cell>; verdict: { status: string; why: string };
 };
 type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number };
@@ -51,6 +56,7 @@ export default function Page() {
   const [migs, setMigs] = useState<Migration[]>([]);
   const [sum, setSum] = useState<Summary | null>(null);
   const [cfg, setCfg] = useState<Config | null>(null);
+  const [files, setFiles] = useState<DataFile[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -65,6 +71,7 @@ export default function Page() {
         ]);
         if (!alive) return;
         setStats(s); setMigs(m); setSum(su); setCfg(c); setErr(null);
+        fetch(`${API}/files`).then((r) => r.json()).then((f) => { if (alive) setFiles(f.files ?? []); }).catch(() => {});
       } catch (e) {
         if (alive) setErr(`Không kết nối được API tại ${API}: ${String(e)}`);
       }
@@ -89,6 +96,9 @@ export default function Page() {
   const signer = Object.entries(rpc?.migrate_users ?? {}).sort((a, b) => b[1] - a[1])[0];
   const signerTotal = Object.values(rpc?.migrate_users ?? {}).reduce((a, b) => a + b, 0);
   const pools = Object.entries(stats?.status.portal_pools ?? {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(" · ");
+  const hv = stats?.status.harvest;
+  const gk = stats?.status.gecko;
+  const mb = (b: number) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1024).toFixed(0)} KB`);
 
   return (
     <main>
@@ -106,6 +116,27 @@ export default function Page() {
         <div className="tile"><div className="k">Graduation / 24h (PumpPortal)</div><div className="v">{stats?.migrations_24h_portal ?? "–"}</div></div>
         <div className="tile"><div className="k">Đã harvest nến</div><div className="v">{sum?.harvested ?? 0} <span className="k">alive 24h {pct(sum?.alive_24h_rate, 0)}</span></div></div>
         <div className={`tile verdict ${verdict.toLowerCase()}`}><div className="k">Giả thuyết C (T+30m → 1h)</div><div className="v">{verdict}</div><div className="k">{sum?.verdict.why}</div></div>
+      </div>
+
+      <h2>Harvester &amp; dữ liệu</h2>
+      <div className="tiles">
+        <div className="tile">
+          <div className="k">Harvester (GeckoTerminal, sau 25h)</div>
+          <div className="v">{hv?.pending ?? 0} <span className="k">chờ · {hv?.due ?? 0} tới hạn · {hv?.runs ?? 0} chu kỳ</span></div>
+          <div className="k">{`có nến ${hv?.with_data ?? 0} · không giao dịch ${hv?.no_candles ?? 0} · không pool ${hv?.no_pool ?? 0}`}{hv?.last_run_ts ? ` · chạy cuối ${Math.max(0, Math.round((now - hv.last_run_ts) / 60))} phút trước` : ""}</div>
+          <div className="k">{`Gecko ${gk?.calls ?? 0} call · ${gk?.rate_limited ?? 0} lần 429 · ${gk?.not_found ?? 0} không có`}</div>
+          <div className="k mono">{hv?.last_error ?? ""}</div>
+        </div>
+        <div className="tile">
+          <div className="k">Dữ liệu trên volume</div>
+          <div className="v">{files.length} <span className="k">file · {mb(files.reduce((a, f) => a + f.bytes, 0))}</span></div>
+          <div className="k mono">{files.slice().sort((a, b) => b.mtime - a.mtime).slice(0, 4).map((f) => `${f.name} ${mb(f.bytes)}`).join(" · ")}</div>
+        </div>
+        <div className="tile">
+          <div className="k">Xuất dữ liệu</div>
+          <div className="k"><a href={`${API}/export/survivor.csv`}>survivor.csv</a> · <a href={`${API}/export/survivor.jsonl`}>survivor.jsonl</a> · <a href={`${API}/export/migrations.jsonl`}>migrations.jsonl</a></div>
+          <div className="k">{sum?.no_data ? `không dữ liệu: ${Object.entries(sum.no_data).map(([k, v]) => `${k} ${v}`).join(" · ") || "0"}` : ""}</div>
+        </div>
       </div>
 
       <h2>Feed on‑chain</h2>
@@ -135,7 +166,7 @@ export default function Page() {
         </div>
         <div className="tile">
           <div className="k">withdraw_authority ({rpc?.migrate_ix ?? "?"})</div>
-          <div className="v mono" style={{ fontSize: 13 }}>{rpc?.withdraw_authority ?? "chưa học"}</div>
+          <div className="v mono" style={{ fontSize: 13, wordBreak: "break-all" }}>{rpc?.withdraw_authority ?? "chưa học"}</div>
           <div className="k">{rpc?.authority_static === false ? "lần gần nhất nạp qua lookup table, websocket không thấy tx đó" : ""}</div>
           <div className="k">{signer ? `ký migrate nhiều nhất: ${short(signer[0])} (${signer[1]}/${signerTotal})${mentions.includes(signer[0]) ? ", đã subscribe" : ""}` : ""}</div>
           <div className="k">đang subscribe: {mentions.map(short).join(", ")}</div>
@@ -168,7 +199,7 @@ export default function Page() {
 
       <h2>Graduation gần đây</h2>
       <table>
-        <thead><tr><th>Lúc</th><th>Mint</th><th>Pool</th><th>Slot</th><th>SOL vào pool</th><th>Nguồn</th><th>Harvest</th></tr></thead>
+        <thead><tr><th>Lúc</th><th>Mint</th><th>Pool</th><th>Slot</th><th>Vốn vào pool (SOL, hoặc quote khác)</th><th>Nguồn</th><th>Harvest</th></tr></thead>
         <tbody>
           {migs.length === 0 && <tr><td colSpan={7} className="empty">Chưa ghi được migration nào</td></tr>}
           {migs.map((m) => (
@@ -177,7 +208,7 @@ export default function Page() {
               <td className="mono"><a href={`https://solscan.io/token/${m.mint}`} target="_blank" rel="noreferrer">{short(m.mint)}</a></td>
               <td className="mono">{m.pool ? short(m.pool) : <span className="k">chưa rõ</span>}</td>
               <td>{m.slot ?? "–"}</td>
-              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? m.sol_amount.toFixed(2) : "–"}</td>
+              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? `${m.sol_amount.toFixed(2)}${m.quote_mint && m.quote_mint !== WSOL ? ` ${short(m.quote_mint)}` : ""}` : "–"}</td>
               <td>{m.source ?? "–"}</td>
               <td>{m.harvested ? "✓" : "chờ 25h"}</td>
             </tr>

@@ -7,12 +7,16 @@ when PH_RUN_RECORDER=1.
 
 import asyncio
 import contextlib
+import csv
+import io
+import json
 import time
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
@@ -101,6 +105,78 @@ def survivor_summary():
 @api.get("/survivor/rows")
 def survivor_rows(limit: int = 200):
     return store.survivor_rows(min(limit, 5000))
+
+
+@api.get("/files")
+def files():
+    """What is on the data volume: the JSONL files are the durable dataset."""
+    d = Path(settings.data_dir)
+    out = []
+    if d.is_dir():
+        for p in sorted(d.iterdir()):
+            if p.is_file():
+                st = p.stat()
+                out.append({"name": p.name, "bytes": st.st_size, "mtime": st.st_mtime})
+    return {"dir": str(d), "files": out}
+
+
+def _jsonl(rows):
+    for r in rows:
+        yield json.dumps(r, separators=(",", ":")) + "\n"
+
+
+@api.get("/export/migrations.jsonl")
+def export_migrations():
+    rows = store.migrations(limit=1_000_000)
+    return StreamingResponse(_jsonl(rows), media_type="application/x-ndjson")
+
+
+@api.get("/export/survivor.jsonl")
+def export_survivor_jsonl():
+    return StreamingResponse(_jsonl(store.survivor_rows()), media_type="application/x-ndjson")
+
+
+_SURVIVOR_COLS = [
+    "mint",
+    "pool",
+    "t0",
+    "slot",
+    "source",
+    "quote_mint",
+    "migration_sol",
+    "pool_resolved",
+    "n_candles",
+    "no_data",
+    "reason",
+    "alive_24h",
+    "reserve_usd_now",
+    "vol_0_30m",
+    "vol_30_60m",
+    "vol_1_6h",
+    "vol_6_24h",
+    "harvested_at",
+]
+
+
+def survivor_csv(rows, delays, horizons) -> str:
+    """One row per token, one column group per (entry delay, horizon) cell."""
+    cells = [f"d{d}_h{h}" for d in delays for h in horizons]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(_SURVIVOR_COLS + [f"{c}_{m}" for c in cells for m in ("net", "gross", "mdd", "exit_stale_s")])
+    for r in rows:
+        line = [r.get(k) for k in _SURVIVOR_COLS]
+        for c in cells:
+            cell = (r.get("cells") or {}).get(c) or {}
+            line += [cell.get("net"), cell.get("gross"), cell.get("mdd"), cell.get("exit_stale_s")]
+        w.writerow(line)
+    return buf.getvalue()
+
+
+@api.get("/export/survivor.csv")
+def export_survivor_csv():
+    text = survivor_csv(store.survivor_rows(), settings.entry_delays_min, settings.horizons_min)
+    return PlainTextResponse(text, media_type="text/csv")
 
 
 @api.get("/debug/tx/{signature}")

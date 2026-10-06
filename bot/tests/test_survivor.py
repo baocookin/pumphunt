@@ -50,6 +50,22 @@ def _row(net: float, key="d30_h60"):
     return {"cells": {key: {"gross": net, "net": net, "mdd": 0.0}}, "alive_24h": True}
 
 
+def test_now_guard_blanks_unobservable_horizons_and_names_the_no_data_reason():
+    t0 = 1_700_000_000
+    cs = [
+        Candle(t0 + m * 60, 1.0, 1.0, 1.0, 1.0 + m / 100, 5.0) for m in range(0, 120)
+    ]  # two hours of trades
+    m = compute_metrics(cs, t0, [0, 30], [60, 1440], 350, now=t0 + 2 * 3600)
+    assert m["cells"]["d0_h60"] is not None and m["cells"]["d30_h60"] is not None
+    assert m["cells"]["d0_h1440"] is None and m["cells"]["d30_h1440"] is None and m["alive_24h"] is None
+    # without `now` the carried-forward mark would fake a 24h return
+    assert compute_metrics(cs, t0, [0], [1440], 350)["cells"]["d0_h1440"] is not None
+    empty = compute_metrics([], t0, [0], [60], 350, now=t0 + 3 * 86400)
+    assert empty["no_data"] is True and empty["reason"] == "no_candles"
+    s = summarize([empty, dict(empty, reason="no_pool"), m], [0, 30], [60, 1440])
+    assert s["no_data"] == {"no_candles": 1, "no_pool": 1} and s["with_data"] == 1
+
+
 def test_verdict_rules():
     assert verdict({"n": 10})["status"] == "INSUFFICIENT"
     base = {"n": MIN_N, "win_rate": 0.5, "top2pct_share": 0.1}

@@ -78,6 +78,7 @@ def rec(tmp_path):
         redis_url=None,
         data_dir=str(tmp_path),
         harvest_after_s=10,
+        initial_backfill_s=0,  # tests that want the one-off deep walk enable it explicitly
         entry_delays_min=[0, 30],
         horizons_min=[60],
     )
@@ -414,6 +415,68 @@ def test_first_poll_of_a_process_walks_back_even_with_a_stored_cursor(rec):
     assert rec.rpc.sig_calls[-1][3] == "sNew"  # in-process cursor from here on
 
 
+def test_first_ever_poll_walks_the_initial_window_once(rec):
+    now = 1_700_000_000.0
+    rec.cfg.backfill_s = 3600
+    rec.cfg.initial_backfill_s = 48 * 3600
+    rec.feed = FakeFeed()
+    rec.rpc = FakeRpc(
+        {}, signatures=[sig("h1", now - 100), sig("h30", now - 30 * 3600), sig("h60", now - 60 * 3600)]
+    )
+    assert asyncio.run(rec.poll_once(now=now)) == 2  # 48h window: h1 and h30, not h60
+    st = rec.rpc_stats["poller"]
+    assert st["initial_backfill"] is True and st["backfill_from"] == now - 48 * 3600
+    assert rec.store.get_kv("initial_backfill_done") == str(int(now))
+    # a later process start walks only the regular window
+    fresh = Recorder(rec.cfg, rec.store)
+    fresh.poll_delays = (0,)
+    fresh.feed = FakeFeed()
+    fresh.rpc = FakeRpc({}, signatures=rec.rpc.signatures)
+    assert asyncio.run(fresh.poll_once(now=now)) == 1
+    assert fresh.rpc_stats["poller"]["initial_backfill"] is False
+    assert fresh.rpc_stats["poller"]["backfill_from"] == now - 3600
+
+
+def test_startup_drops_portal_rows_the_chain_contradicts(rec):
+    t = 1_700_000_000.0
+    rec.on_chain(mig(t, mint="REAL", pool="P1"))  # signature "s" belongs to REAL
+    # a phantom left behind by an older build: PumpPortal paired "s" with another mint
+    rec.store.add_migration(
+        {"mint": "PHANTOM", "pool": None, "ts": t, "slot": None, "signature": "s", "source": "portal"}
+    )
+    rec.on_portal(portal_mig(t, mint="WAITING", signature="s9"))  # legit, just not confirmed yet
+    assert rec.store.migration_count() == 3
+    fresh = Recorder(rec.cfg, rec.store)
+    assert fresh.prime_claims() == 1
+    assert sorted(r["mint"] for r in rec.store.migrations()) == ["REAL", "WAITING"]
+    assert fresh.rpc_stats["portal_mislabeled"] == 1
+
+
+def test_harvest_stats_and_reasons(rec):
+    t0 = 1_700_000_000
+    rec.on_chain(mig(float(t0), mint="TRADED", pool="P1"))
+    rec.on_chain(mig(float(t0), mint="SILENT", pool="P2"))
+    rec.on_portal(portal_mig(float(t0), mint="NOWHERE", signature="x"))
+    cs = [Candle(t0 + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)]
+
+    class G(FakeGecko):
+        async def candles_between(self, pool, start, end):
+            self.calls += 1
+            return [c for c in self.candles if start <= c.ts <= end] if pool == "P1" else []
+
+    g = G(cs)
+    assert asyncio.run(rec.harvest_once(g, now=t0 + 100)) == 3
+    hs = rec.harvest_stats
+    assert hs["runs"] == 1 and hs["rows_last_run"] == 3 and hs["last_run_ts"] == t0 + 100
+    assert hs["with_data"] == 1 and hs["no_candles"] == 1 and hs["no_pool"] == 1
+    assert hs["due"] == 0 and hs["pending"] == 0
+    by = {r["mint"]: r for r in rec.store.survivor_rows()}
+    assert by["SILENT"]["reason"] == "no_candles" and by["NOWHERE"]["reason"] == "no_pool"
+    assert "reason" not in by["TRADED"] and by["TRADED"]["quote_mint"] is None
+    # cells beyond `now` are blank: now is only 100s after t0, so every horizon is unobservable
+    assert all(v is None for v in by["TRADED"]["cells"].values()) and by["TRADED"]["alive_24h"] is None
+
+
 def test_poller_cold_start_stays_inside_the_backfill_window(rec):
     now = 1_700_000_000.0
     rec.cfg.backfill_s = 3600
@@ -472,7 +535,7 @@ def test_harvest_waits_then_computes(rec):
     g = FakeGecko(cs)
     # too early: migration younger than harvest_after_s
     assert asyncio.run(rec.harvest_once(g, now=t0 + 5)) == 0
-    assert asyncio.run(rec.harvest_once(g, now=t0 + 100)) == 1
+    assert asyncio.run(rec.harvest_once(g, now=t0 + 26 * 3600)) == 1
     rows = rec.store.survivor_rows()
     assert len(rows) == 1 and rows[0]["mint"] == "M1" and rows[0]["reserve_usd_now"] == 12345.6
     assert rows[0]["pool"] == "P1" and rows[0]["pool_resolved"] is False
@@ -489,7 +552,7 @@ def test_harvest_resolves_pool_for_portal_only_migrations(rec):
     rec.on_portal(portal_mig(float(t0), mint="M3"))  # never gets a pool anywhere
     cs = [Candle(t0 + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)]
     g = FakeGecko(cs, pools={"M2": "POOL2"})
-    assert asyncio.run(rec.harvest_once(g, now=t0 + 100)) == 2
+    assert asyncio.run(rec.harvest_once(g, now=t0 + 26 * 3600)) == 2
     by_mint = {r["mint"]: r for r in rec.store.survivor_rows()}
     assert by_mint["M2"]["pool"] == "POOL2" and by_mint["M2"]["pool_resolved"] is True
     assert by_mint["M3"]["pool"] is None and by_mint["M3"]["no_data"] is True

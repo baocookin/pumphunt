@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+import pytest
 import websockets
 from helpers import PK_A, PK_B, migrate_event_log
 
@@ -132,10 +133,54 @@ def test_feeds_reconnect_when_the_socket_goes_silent():
     assert "no message" in cs["last_error"] and "no message" in ps["last_error"]
 
 
+def test_gecko_raises_after_persistent_rate_limits_and_counts_calls(monkeypatch):
+    import httpx
+
+    from app.gecko import GeckoTerminal
+
+    class Resp:
+        def __init__(self, status, payload=None):
+            self.status_code = status
+            self._p = payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                req = httpx.Request("GET", "https://g")
+                raise httpx.HTTPStatusError(
+                    "x", request=req, response=httpx.Response(self.status_code, request=req)
+                )
+
+        def json(self):
+            return self._p
+
+    class Client:
+        def __init__(self, codes):
+            self.codes = list(codes)
+
+        async def get(self, url, params=None, headers=None):
+            code = self.codes.pop(0)
+            return Resp(code, {"data": {"attributes": {"reserve_in_usd": "1"}}} if code == 200 else None)
+
+    monkeypatch.setattr("app.gecko.asyncio.sleep", _no_sleep)
+    g = GeckoTerminal(Client([429, 429, 429, 429]), "https://g", rpm=100_000)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(g.pool_info("P"))
+    assert g.stats == {"calls": 4, "rate_limited": 4, "not_found": 0, "errors": 1}
+    g = GeckoTerminal(Client([429, 200, 404]), "https://g", rpm=100_000)
+    assert asyncio.run(g.pool_info("P")) == {"reserve_in_usd": "1"}
+    assert asyncio.run(g.pool_info("Q")) is None
+    assert g.stats == {"calls": 3, "rate_limited": 1, "not_found": 1, "errors": 0}
+
+
+async def _no_sleep(_s):
+    return None
+
+
 def test_api_routes_under_prefix(monkeypatch, tmp_path):
     monkeypatch.setenv("PH_RUN_RECORDER", "0")
     monkeypatch.setenv("PH_REDIS_URL", "")
     monkeypatch.setenv("PH_STATIC_DIR", str(tmp_path))
+    monkeypatch.setenv("PH_DATA_DIR", str(tmp_path))
     (tmp_path / "index.html").write_text("<h1>dash</h1>")
     import importlib
 
@@ -153,3 +198,23 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
         assert c.get("/api/stats").json()["chain_scope"] == "migrations"
         assert c.get("/api/survivor/summary").json()["verdict"]["status"] == "INSUFFICIENT"
         assert "dash" in c.get("/").text
+        # exports and the data-volume listing
+        api_mod.store.add_migration({"mint": "M1", "pool": "P1", "ts": 1.0, "slot": 2, "signature": "s"})
+        api_mod.store.mark_harvested(
+            "M1",
+            {
+                "mint": "M1",
+                "pool": "P1",
+                "t0": 1,
+                "no_data": False,
+                "cells": {"d30_h60": {"net": 0.1, "gross": 0.14, "mdd": -0.2, "exit_stale_s": 30}},
+            },
+        )
+        mig = c.get("/api/export/migrations.jsonl")
+        assert mig.headers["content-type"].startswith("application/x-ndjson") and '"mint":"M1"' in mig.text
+        assert '"net":0.1' in c.get("/api/export/survivor.jsonl").text
+        csv_text = c.get("/api/export/survivor.csv").text.splitlines()
+        assert csv_text[0].startswith("mint,pool,t0,") and "d30_h60_net" in csv_text[0]
+        assert csv_text[1].startswith("M1,P1,1,") and ",0.1,0.14,-0.2,30" in csv_text[1]
+        files = c.get("/api/files").json()
+        assert files["dir"] == str(tmp_path) and {f["name"] for f in files["files"]} == {"index.html"}
