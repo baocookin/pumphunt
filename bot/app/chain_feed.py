@@ -151,9 +151,11 @@ class SolanaLogsFeed:
                             raise TimeoutError(f"no message for {self.stale_s:.0f}s") from None
                         for ev in self._on_message(json.loads(raw), time.time()):
                             yield ev
-            except (TimeoutError, websockets.ConnectionClosed, OSError) as exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a rejected handshake must not end the loop
                 self.stats["last_error"] = f"{type(exc).__name__}: {exc}"
-                print(f"[chain] disconnected: {exc}; reconnecting in {backoff:.0f}s")
+                print(f"[chain] disconnected: {type(exc).__name__}: {exc}; reconnecting in {backoff:.0f}s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
             finally:

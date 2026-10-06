@@ -101,6 +101,7 @@ class Recorder:
             "fills_paused": False,
         }
         self.fetcher: SwapFetcher | None = None
+        self.task_errors: dict[str, dict[str, Any]] = {}  # loop name -> last crash, for the status page
         self.rpc: SolanaRpc | None = None
         self.learned_authority: str | None = None
         self.learned_signer: str | None = None
@@ -680,9 +681,30 @@ class Recorder:
                 rpc={**self.rpc_stats, "transport": self.rpc.stats if self.rpc else None},
                 harvest=self.harvest_stats,
                 gecko=self.gecko.stats if self.gecko else None,
+                task_errors=self.task_errors,
                 mentions=self.mentions(),
             )
             await asyncio.sleep(5)
+
+    async def _supervise(self, name: str, factory, restart_s: float = 5.0) -> None:
+        """Run `factory()` forever: a loop that raises is logged, counted and started again.
+        Without this, one uncaught exception ends `gather`, closes the shared HTTP client and
+        silently kills every other loop (seen in production when PumpPortal refused a reconnect)."""
+        while True:
+            try:
+                await factory()
+                return  # a loop that returns on purpose is done
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - keep the recorder alive no matter what
+                err = self.task_errors.setdefault(name, {"count": 0})
+                err["count"] += 1
+                err["last"] = f"{type(exc).__name__}: {exc}"[:300]
+                err["ts"] = time.time()
+                print(
+                    f"[recorder] {name} crashed ({type(exc).__name__}: {exc}); restarting in {restart_s:.0f}s"
+                )
+                await asyncio.sleep(restart_s)
 
     async def run(self) -> None:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -698,13 +720,13 @@ class Recorder:
             if self.rpc is not None and self.cfg.fills_enabled:
                 self.fetcher = SwapFetcher(self.rpc, max_pages=self.cfg.fills_max_pages)
                 print(f"[recorder] {self.requeue_for_fills()} harvested rows re-queued for fills")
-            tasks = [self.run_chain(), self.run_status()]
+            tasks = [self._supervise("chain", self.run_chain), self._supervise("status", self.run_status)]
             if self.rpc is not None and self.cfg.rpc_poll:
-                tasks.append(self.run_poller())
+                tasks.append(self._supervise("poller", self.run_poller))
             if self.cfg.pumpportal_enabled:
-                tasks.append(self.run_portal())
+                tasks.append(self._supervise("portal", self.run_portal))
             if self.cfg.run_harvester:
-                tasks.append(self.run_harvester(client))
+                tasks.append(self._supervise("harvester", lambda: self.run_harvester(client)))
             await asyncio.gather(*tasks)
 
 

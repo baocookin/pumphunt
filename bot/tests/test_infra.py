@@ -265,6 +265,45 @@ def test_gecko_limiter_adapts_and_candles_default_to_five_minutes(monkeypatch):
     assert keyed.headers["x-cg-pro-api-key"] == "K" and "x-cg-pro-api-key" not in g1.headers
 
 
+def test_feeds_survive_a_rejected_handshake_and_reconnect():
+    """PumpPortal was seen dropping the socket and then answering the reconnect with an HTTP
+    error; that exception escaped the loop. Now any failure is retried."""
+    from websockets.http11 import Response
+
+    rejected = {"n": 0}
+
+    async def process_request(connection, request):
+        if rejected["n"] < 1:
+            rejected["n"] += 1
+            return Response(429, "Too Many Requests", websockets.Headers(), b"slow down")
+        return None
+
+    async def handler(ws):
+        async for msg in ws:
+            m = json.loads(msg)
+            if m.get("method") == "logsSubscribe":
+                await ws.send(json.dumps({"jsonrpc": "2.0", "id": m["id"], "result": 1}))
+
+    async def drain(feed):
+        async for _ in feed.events():
+            pass
+
+    async def run():
+        server = await websockets.serve(handler, "127.0.0.1", 0, process_request=process_request)
+        url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+        portal = PumpPortalFeed(url, stale_s=0.3, backoff_s=0.05)
+        task = asyncio.create_task(drain(portal))
+        await asyncio.sleep(0.6)
+        task.cancel()
+        server.close()
+        await server.wait_closed()
+        return portal.stats
+
+    st = asyncio.run(run())
+    assert rejected["n"] == 1 and st["connects"] >= 1  # rejected once, then connected
+    assert st["stale_reconnects"] >= 1  # and kept cycling afterwards: the loop never died
+
+
 def test_api_routes_under_prefix(monkeypatch, tmp_path):
     monkeypatch.setenv("PH_RUN_RECORDER", "0")
     monkeypatch.setenv("PH_REDIS_URL", "")
