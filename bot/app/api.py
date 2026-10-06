@@ -178,13 +178,47 @@ _FILL_DETAIL = [
     "mdd",
 ]
 _FLOW = ["swaps", "buys", "sells", "traders", "buyers", "net_sol", "top_seller_share", "creator_sell_sol"]
+_HOLDERS = [
+    "pool_share",
+    "top1",
+    "top5",
+    "top10",
+    "holders_1pct",
+    "dev_share",
+    "bundle_share",
+    "top1_exit_share",
+    "top10_exit_share",
+    "late_s",
+]
+_CURVE = [
+    "graduate_s",
+    "dev_buy_sol",
+    "bundle_buyers",
+    "bundle_sol",
+    "early_buyers",
+    "early_sol",
+    "buyers_60s",
+    "buy_sol_60s",
+    "sell_sol_60s",
+    "dev_sell_sol",
+    "curve_tx",
+    "first_minute_complete",
+]
+_FUNDING = ["wallets", "fresh_1d", "max_cluster", "cluster_hold_share", "dev_linked", "dev_group_hold_share"]
 
 
 def survivor_csv(
-    rows, delays, horizons, sizes=(), detail_cell: str = "d30_h60", flow_entry: str = "d30"
+    rows,
+    delays,
+    horizons,
+    sizes=(),
+    detail_cell: str = "d30_h60",
+    flow_entry: str = "d30",
+    holder_delays=(),
 ) -> str:
     """One row per token (latest harvest): candle marks per cell, executable net per size and
-    cell, the detail of `detail_cell` per size, order flow before `flow_entry`, swap coverage."""
+    cell, the detail of `detail_cell` per size, order flow before `flow_entry`, swap coverage,
+    then the decision-time features: holders at each snapshot, the curve's history, funders."""
     cells = [f"d{d}_h{h}" for d in delays for h in horizons]
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -195,6 +229,8 @@ def survivor_csv(
     head += [f"flow_{flow_entry}_{m}" for m in _FLOW]
     head += ["swaps_fetched", "window_method", "window_complete", "window_chain_breaks"]
     head += ["states_unresolved", "swap_credits"]
+    head += [f"h{d}_{m}" for d in holder_delays for m in _HOLDERS]
+    head += [f"curve_{m}" for m in _CURVE] + [f"fund_{m}" for m in _FUNDING]
     w.writerow(head)
     for r in latest_by_mint(rows):
         line = [r.get(k) for k in _SURVIVOR_COLS] + [r.get("fills_version")]
@@ -219,6 +255,13 @@ def survivor_csv(
         win = sw.get("window") or {}
         line += [sw.get("swaps"), win.get("method"), win.get("complete"), win.get("chain_breaks")]
         line += [(sw.get("states") or {}).get("unresolved"), sw.get("credits")]
+        for d in holder_delays:
+            h = (r.get("holders") or {}).get(f"d{d}") or {}
+            line += [h.get(m) for m in _HOLDERS]
+        cv = r.get("curve") or {}
+        line += [cv.get(m) for m in _CURVE]
+        fu = r.get("funding") or {}
+        line += [fu.get(m) for m in _FUNDING]
         w.writerow(line)
     return buf.getvalue()
 
@@ -226,7 +269,11 @@ def survivor_csv(
 @api.get("/export/survivor.csv")
 def export_survivor_csv():
     text = survivor_csv(
-        store.survivor_rows(), settings.entry_delays_min, settings.horizons_min, settings.fill_sizes_sol
+        store.survivor_rows(),
+        settings.entry_delays_min,
+        settings.horizons_min,
+        settings.fill_sizes_sol,
+        holder_delays=settings.holder_snapshot_delays_min,
     )
     return PlainTextResponse(text, media_type="text/csv")
 

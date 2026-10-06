@@ -29,10 +29,15 @@ import httpx
 from .anchor import PUMP_PROGRAM, ChainEvent
 from .chain_feed import ChainNotification, SolanaLogsFeed
 from .config import Settings
+from .curve_history import curve_history
 from .events import Event
 from .feed import PumpPortalFeed
-from .fills import compute_fills, flow_features
+from .fills import compute_fills, flow_features, state_at
+from .funding import features as funding_features
+from .funding import first_funders, pick_wallets
 from .gecko import GeckoTerminal
+from .holders import concentration, exit_power, group_share
+from .holders import snapshot as holder_snapshot
 from .jsonl import JsonlWriter
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import Store, hour_key
@@ -71,6 +76,16 @@ class Recorder:
         self.survivor = JsonlWriter(d / "survivor.jsonl")
         # every swap the harvester fetched per pool, so later hypotheses run offline without RPC
         self.swaps_log = JsonlWriter(d / "swaps.jsonl", rotate_daily=True, compress_rotated=True)
+        # the largest holders at each decision time, taken live (nothing rebuilds them later)
+        self.holders_log = JsonlWriter(d / "holders.jsonl", rotate_daily=True, compress_rotated=True)
+        self.snapshot_stats: dict[str, Any] = {
+            "taken": 0,
+            "late": 0,  # due long before we got to it (restart, backlog): not a decision-time view
+            "errors": 0,
+            "queued": 0,
+            "last_ts": 0.0,
+            "last_error": None,
+        }
         self.started = time.time()
         self.counts = {
             "create": 0,
@@ -112,6 +127,10 @@ class Recorder:
             "token_filter": None,  # Helius tokenTransfer filter: None unverified, True in use, False off
             "token_filter_note": None,
             "token_filter_checks": {},
+            "features_rows": 0,  # rows with curve history
+            "funding_rows": 0,
+            "funding_lookups": 0,  # wallets looked up on the RPC (the rest came from the cache)
+            "features_error": None,
         }
         self.fetcher: SwapFetcher | None = None
         self.task_errors: dict[str, dict[str, Any]] = {}  # loop name -> last crash, for the status page
@@ -251,7 +270,61 @@ class Recorder:
         self.migrations.write(row)
         if status in ("new", "filled"):
             self.store.incr("migrations_confirmed", hour)
+            self._schedule_snapshots(row)
         return status
+
+    def _schedule_snapshots(self, row: dict[str, Any]) -> None:
+        """Queue a holder snapshot at every decision time of a tradeable SOL pool."""
+        cfg = self.cfg
+        if not cfg.holder_snapshots or row.get("quote_mint") not in SOL_QUOTES:
+            return
+        if row.get("sol_amount") is not None and row["sol_amount"] < 1:
+            return  # the migration put almost no SOL in the pool: nothing to decide on
+        t = float(row.get("chain_ts") or row["ts"])
+        for d in cfg.holder_snapshot_delays_min:
+            member = f"{row['mint']}|{row['pool']}|{d}"
+            self.store.schedule("snap", member, t + d * 60 + cfg.fill_latency_s)
+
+    async def snapshot_once(self, now: float | None = None) -> int:
+        """Take every holder snapshot that is due; one that is too late is dropped, one that
+        fails is retried a few seconds later while it is still on time."""
+        assert self.rpc is not None
+        cfg = self.cfg
+        ss = self.snapshot_stats
+        taken = 0
+        for member, due in self.store.take_due("snap", now or time.time(), 20):
+            at = now or time.time()
+            late = at - due
+            if late > cfg.holder_snapshot_max_late_s:
+                ss["late"] += 1
+                continue
+            mint, pool, d = member.split("|")
+            try:
+                snap = await holder_snapshot(self.rpc, mint, pool)
+            except httpx.HTTPError as exc:
+                ss["errors"] += 1
+                ss["last_error"] = describe_http_error(exc)
+                if late + 15 <= cfg.holder_snapshot_max_late_s:
+                    self.store.schedule("snap", member, at + 15)
+                continue
+            doc = dict(snap, mint=mint, pool=pool, d=int(d), due=due, taken=at, late_s=round(late, 1))
+            self.store.put_doc("holders", f"{mint}|{d}", doc)
+            self.holders_log.write(doc, now=at)
+            self.store.incr_kv(self._credits_key(at), snap["credits"])
+            ss["taken"] += 1
+            ss["last_ts"] = at
+            taken += 1
+        ss["queued"] = self.store.queue_len("snap")
+        return taken
+
+    async def run_snapshots(self) -> None:
+        print(f"[snapshots] holders at T+{self.cfg.holder_snapshot_delays_min} min of each migration")
+        while True:
+            try:
+                await self.snapshot_once()
+            except Exception as exc:  # noqa: BLE001 - a bad snapshot must not stop the queue
+                self.snapshot_stats["last_error"] = f"{type(exc).__name__}: {exc}"[:200]
+            await asyncio.sleep(self.cfg.holder_snapshot_poll_s)
 
     def on_notification(self, n: ChainNotification) -> None:
         """Websocket saw a tx of the authority but its logs held no migrate event.
@@ -630,7 +703,8 @@ class Recorder:
         f = self.fetcher
         spent = f.credits
         try:
-            await self._fills_for(metrics, row, pool, t0, now)
+            swaps = await self._fills_for(metrics, row, pool, t0, now)
+            await self._features_for(metrics, row, swaps, now)
         finally:
             # every credit is metered, also those of a pool that failed half-way and will be retried
             hs = self.harvest_stats
@@ -638,7 +712,7 @@ class Recorder:
 
     async def _fills_for(
         self, metrics: dict[str, Any], row: dict[str, Any], pool: str, t0: int, now: float
-    ) -> None:
+    ) -> list:
         assert self.fetcher is not None
         cfg = self.cfg
         f = self.fetcher
@@ -737,6 +811,66 @@ class Recorder:
         hs["states_unresolved"] += pst["unresolved"]
         if swaps:
             hs["fills_rows"] += 1
+        return swaps
+
+    async def _features_for(
+        self, metrics: dict[str, Any], row: dict[str, Any], swaps: list, now: float
+    ) -> None:
+        """Decision-time features: the live holder snapshots (no RPC here), the bonding curve's
+        history and the funders of the wallets that matter. An RPC failure here leaves the
+        feature out instead of failing the row: the fills were paid for already."""
+        assert self.fetcher is not None
+        cfg = self.cfg
+        hs = self.harvest_stats
+        mint = row["mint"]
+        t_mig = int(row.get("chain_ts") or row["ts"])
+        snaps = {}
+        for d in cfg.holder_snapshot_delays_min:
+            doc = self.store.pop_doc("holders", f"{mint}|{d}")
+            if doc is not None:
+                snaps[d] = doc
+        curve = None
+        try:
+            if cfg.features_curve and row.get("bonding_curve") and self.fetcher.gtfa is not False:
+                curve = await curve_history(
+                    self.fetcher, row["bonding_curve"], mint, t_mig, cfg.features_curve_count_cap
+                )
+        except httpx.HTTPError as exc:
+            hs["features_error"] = f"curve {mint[:6]}: {describe_http_error(exc)}"
+        found = bool(curve and curve.get("found"))
+        bundle = (curve or {}).get("bundle_wallets") or []
+        dev = (curve or {}).get("dev")
+        holders: dict[str, Any] = {}
+        for d, doc in snaps.items():
+            state = state_at(swaps, t_mig + d * 60 + cfg.fill_latency_s) if swaps else None
+            h = {**concentration(doc), **exit_power(doc, state), "late_s": doc.get("late_s")}
+            if found:
+                h["dev_share"] = group_share(doc, [dev] if dev else [])
+                h["bundle_share"] = group_share(doc, bundle)
+            holders[f"d{d}"] = h
+        funding = None
+        first = snaps[min(snaps)] if snaps else None
+        if first and found and cfg.features_funding_wallets > 0:
+            state = state_at(swaps, t_mig + min(snaps) * 60 + cfg.fill_latency_s) if swaps else None
+            if state is not None and state.real_sol >= cfg.features_funding_min_real_sol:
+                wallets = pick_wallets(dev, bundle, first["holders"], cfg.features_funding_wallets)
+                try:
+                    fund, looked = await first_funders(
+                        self.fetcher, self.store, wallets, cfg.features_funding_ttl_days * 86_400
+                    )
+                    outside = (first.get("supply") or 0) - (first.get("pool_amount") or 0)
+                    held = {o: amt for o, amt in first["holders"]}
+                    funding = funding_features(fund, dev, curve.get("t_create"), held, outside)
+                    funding["looked"] = looked
+                    hs["funding_lookups"] += looked
+                    hs["funding_rows"] += 1
+                except httpx.HTTPError as exc:
+                    hs["features_error"] = f"funding {mint[:6]}: {describe_http_error(exc)}"
+        metrics["holders"] = holders or None
+        metrics["curve"] = curve
+        metrics["funding"] = funding
+        if found:
+            hs["features_rows"] += 1
 
     def requeue_for_fills(self) -> int:
         """Once per fills version: rows harvested under an older execution model (or none) go
@@ -790,6 +924,7 @@ class Recorder:
                 portal_pools=self.portal_pools,
                 rpc={**self.rpc_stats, "transport": self.rpc.stats if self.rpc else None},
                 harvest=self.harvest_stats,
+                snapshots=self.snapshot_stats,
                 gecko=self.gecko.stats if self.gecko else None,
                 task_errors=self.task_errors,
                 mentions=self.mentions(),
@@ -842,6 +977,8 @@ class Recorder:
                 tasks.append(self._supervise("portal", self.run_portal))
             if self.cfg.run_harvester:
                 tasks.append(self._supervise("harvester", lambda: self.run_harvester(client)))
+            if self.rpc is not None and self.cfg.holder_snapshots:
+                tasks.append(self._supervise("snapshots", self.run_snapshots))
             await asyncio.gather(*tasks)
 
 

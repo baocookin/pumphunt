@@ -353,6 +353,9 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
                 "t0": 1,
                 "no_data": False,
                 "cells": {"d30_h60": {"net": 0.1, "gross": 0.14, "mdd": -0.2, "exit_stale_s": 30}},
+                "holders": {"d30": {"top10": 0.42, "dev_share": 0.05}},
+                "curve": {"found": True, "graduate_s": 61, "bundle_sol": 7.5},
+                "funding": {"max_cluster": 3},
             },
         )
         mig = c.get("/api/export/migrations.jsonl")
@@ -361,5 +364,13 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
         csv_text = c.get("/api/export/survivor.csv").text.splitlines()
         assert csv_text[0].startswith("mint,pool,t0,") and "d30_h60_net" in csv_text[0]
         assert csv_text[1].startswith("M1,P1,1,") and ",0.1,0.14,-0.2,30" in csv_text[1]
+        head, line = csv_text[0].split(","), csv_text[1].split(",")
+        got = dict(zip(head, line, strict=True))
+        assert got["h30_top10"] == "0.42" and got["h30_dev_share"] == "0.05" and got["h60_top10"] == ""
+        assert (
+            got["curve_graduate_s"] == "61"
+            and got["curve_bundle_sol"] == "7.5"
+            and got["fund_max_cluster"] == "3"
+        )
         files = c.get("/api/files").json()
         assert files["dir"] == str(tmp_path) and {f["name"] for f in files["files"]} == {"index.html"}

@@ -171,6 +171,44 @@ class SwapFetcher:
         self.credits += 1
         return await self.rpc.get_transaction(signature)
 
+    # ---- any address's history (curves, wallets) ----
+    async def history_page(
+        self,
+        address: str,
+        *,
+        full: bool,
+        sort: str,
+        limit: int,
+        t_from: float | None = None,
+        t_to: float | None = None,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """One getTransactionsForAddress page of successful transactions; needs the method
+        (callers check `gtfa is not False`). Raises RpcError like any read."""
+        try:
+            return await self._page(
+                address,
+                full=full,
+                sort=sort,
+                limit=limit,
+                flt=self._filters(t_from, t_to, None, False),
+                token=token,
+            )
+        except RpcError as exc:
+            self._gtfa_failed(exc)
+            raise
+
+    async def count_txs(self, address: str, t_from: float, t_to: float, cap: int) -> tuple[int, bool]:
+        """(successful transactions in [t_from, t_to], whether that is the full count) up to `cap`."""
+        try:
+            n = await self._count(
+                address, int(t_from), int(t_to), self._filters(None, None, None, False), cap
+            )
+        except RpcError as exc:
+            self._gtfa_failed(exc)
+            raise
+        return min(n, cap), n <= cap
+
     # ---- windows ----
     async def _count(self, pool: str, t_from: int, t_to: int, flt: dict[str, Any], cap: int) -> int:
         """Successful transactions in [t_from, t_to], counted up to just past `cap`."""

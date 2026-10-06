@@ -69,6 +69,16 @@ class Store(Protocol):
     def set_kv(self, key: str, value: str) -> None: ...
     def incr_kv(self, key: str, n: int) -> int: ...
     def requeue(self, mints: list[str]) -> int: ...
+    # timed work queues (e.g. holder snapshots due at T+30): members ordered by due time
+    def schedule(self, queue: str, member: str, due_ts: float) -> bool: ...
+    def take_due(self, queue: str, now: float, limit: int) -> list[tuple[str, float]]: ...
+    def queue_len(self, queue: str) -> int: ...
+    # small JSON documents waiting for the harvester, removed once attached to a row
+    def put_doc(self, space: str, key: str, doc: dict[str, Any]) -> None: ...
+    def pop_doc(self, space: str, key: str) -> dict[str, Any] | None: ...
+    # expiring cache (e.g. a wallet's first funder)
+    def cache_get(self, key: str) -> str | None: ...
+    def cache_set(self, key: str, value: str, ttl_s: int) -> None: ...
 
 
 class MemoryStore:
@@ -78,6 +88,9 @@ class MemoryStore:
         self._survivor: list[dict[str, Any]] = []
         self._status: dict[str, Any] = {}
         self._kv: dict[str, str] = {}
+        self._queues: dict[str, dict[str, float]] = {}
+        self._docs: dict[str, dict[str, dict[str, Any]]] = {}
+        self._cache: dict[str, tuple[str, float]] = {}
 
     def incr(self, name: str, hour: str, n: int = 1) -> None:
         self._counters.setdefault(name, {})
@@ -160,6 +173,38 @@ class MemoryStore:
                 row["harvested"] = False
                 n += 1
         return n
+
+    def schedule(self, queue: str, member: str, due_ts: float) -> bool:
+        q = self._queues.setdefault(queue, {})
+        if member in q:
+            return False
+        q[member] = due_ts
+        return True
+
+    def take_due(self, queue: str, now: float, limit: int) -> list[tuple[str, float]]:
+        q = self._queues.get(queue, {})
+        due = sorted(((m, t) for m, t in q.items() if t <= now), key=lambda mt: mt[1])[:limit]
+        for m, _ in due:
+            del q[m]
+        return due
+
+    def queue_len(self, queue: str) -> int:
+        return len(self._queues.get(queue, {}))
+
+    def put_doc(self, space: str, key: str, doc: dict[str, Any]) -> None:
+        self._docs.setdefault(space, {})[key] = json.loads(json.dumps(doc))
+
+    def pop_doc(self, space: str, key: str) -> dict[str, Any] | None:
+        return self._docs.get(space, {}).pop(key, None)
+
+    def cache_get(self, key: str) -> str | None:
+        hit = self._cache.get(key)
+        if hit is None or hit[1] < time.time():
+            return None
+        return hit[0]
+
+    def cache_set(self, key: str, value: str, ttl_s: int) -> None:
+        self._cache[key] = (value, time.time() + ttl_s)
 
 
 class RedisStore:
@@ -276,6 +321,35 @@ class RedisStore:
             p.execute()
             n += 1
         return n
+
+    def schedule(self, queue: str, member: str, due_ts: float) -> bool:
+        return bool(self.r.zadd(f"ph:q:{queue}", {member: due_ts}, nx=True))
+
+    def take_due(self, queue: str, now: float, limit: int) -> list[tuple[str, float]]:
+        key = f"ph:q:{queue}"
+        due = self.r.zrangebyscore(key, "-inf", now, start=0, num=limit, withscores=True)
+        if due:
+            self.r.zrem(key, *[m for m, _ in due])
+        return [(m, float(t)) for m, t in due]
+
+    def queue_len(self, queue: str) -> int:
+        return int(self.r.zcard(f"ph:q:{queue}"))
+
+    def put_doc(self, space: str, key: str, doc: dict[str, Any]) -> None:
+        self.r.hset(f"ph:doc:{space}", key, json.dumps(doc))
+
+    def pop_doc(self, space: str, key: str) -> dict[str, Any] | None:
+        p = self.r.pipeline()
+        p.hget(f"ph:doc:{space}", key)
+        p.hdel(f"ph:doc:{space}", key)
+        raw, _ = p.execute()
+        return json.loads(raw) if raw else None
+
+    def cache_get(self, key: str) -> str | None:
+        return self.r.get(f"ph:cache:{key}")
+
+    def cache_set(self, key: str, value: str, ttl_s: int) -> None:
+        self.r.set(f"ph:cache:{key}", value, ex=ttl_s)
 
 
 def make_store(redis_url: str | None) -> Store:

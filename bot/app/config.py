@@ -99,6 +99,23 @@ class Settings(BaseSettings):
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction
 
+    # --- decision-time features (RPC credits, metered with the fills) ---
+    # Live: the token's largest holders at each decision time (3 credits). Nothing else can
+    # rebuild them later. Skipped for pools whose migration put < 1 SOL in (not tradeable).
+    holder_snapshots: bool = True
+    holder_snapshot_delays_min: list[int] = [30, 60]
+    holder_snapshot_max_late_s: float = 300  # a snapshot taken later than this is not a decision-time one
+    holder_snapshot_poll_s: float = 5
+    # At harvest: how the bonding curve filled (its oldest 100 transactions + a count, ~20-60 credits)
+    features_curve: bool = True
+    features_curve_count_cap: int = 5_000
+    # At harvest: the oldest transaction (first funder) of the creator, the creation-slot bundle and
+    # the largest holders, 10 credits per wallet not in the 30-day cache; only for pools holding
+    # at least `features_funding_min_real_sol` real SOL at the first decision time.
+    features_funding_wallets: int = 8
+    features_funding_min_real_sol: float = 5
+    features_funding_ttl_days: int = 30
+
     # --- survivor-entry hypothesis (C) ---
     entry_delays_min: list[int] = [0, 5, 15, 30, 60]
     horizons_min: list[int] = [60, 360, 1440]

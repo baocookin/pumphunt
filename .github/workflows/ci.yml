@@ -7,6 +7,19 @@ on:
 jobs:
   bot:
     runs-on: ubuntu-latest
+    # production keeps its state in Redis: the store contract tests run against a real server
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_TEST_URL: redis://localhost:6379/15
     defaults:
       run:
         working-directory: bot
