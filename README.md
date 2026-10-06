@@ -25,7 +25,8 @@ Một container `pumphunt` (FastAPI phục vụ cả API lẫn dashboard đã bu
 | Decoder | `bot/app/anchor.py` | Decode `CreateEvent / TradeEvent / CompleteEvent / CompletePumpAmmMigrationEvent` từ log `Program data:`; discriminator + layout lấy từ IDL chính thức. Giữ raw base64 để decode lại sau. |
 | Chain feed | `bot/app/chain_feed.py` | `logsSubscribe` một subscription/địa chỉ, có **slot**, reconnect. |
 | Portal feed | `bot/app/feed.py` | Kênh miễn phí (`subscribeNewToken`, `subscribeMigration`): đếm coverage + nguồn migration dự phòng. Kênh `subscribeMigration` gộp cả bonk.fun/Raydium LaunchLab; recorder lọc theo trường `pool`, chỉ ghi pump.fun (`portal_migrate_other` đếm phần còn lại). Cả hai websocket tự nối lại khi im lặng quá `PH_PUMPPORTAL_STALE_S` (120s) / `PH_CHAIN_STALE_S` (600s), vì socket chết vẫn trả lời ping. |
-| RPC confirm | `bot/app/rpc.py` | Mỗi tx migrate mà websocket thấy (log bị Solana cắt ở 10KB nên không decode được) hoặc PumpPortal báo → `getTransaction(signature)` (1 credit, dedup theo signature) → lấy **pool + slot** từ bản sao event qua self‑CPI, hoặc từ account của instruction `migrate`/`migrate_v2`; đọc `withdraw_authority` thật và tự re‑subscribe nếu địa chỉ đoán sai. |
+| Poller | `bot/app/recorder.py` | **Nguồn chính.** Mỗi 30s gọi `getSignaturesForAddress(withdraw_authority)` (1 credit) từ cursor lưu trong Redis; tx lỗi (≈1/3, bot đua migrate) bỏ qua miễn phí, tx mới chưa đường nào claim thì `getTransaction`. Khác `logsSubscribe`, index này liệt kê cả tx nạp authority qua lookup table (đo: 143/143). Khởi động lạnh hoặc mất cursor thì quét lại `PH_BACKFILL_S` (6h). |
+| RPC confirm | `bot/app/rpc.py` | Mỗi tx migrate mà poller liệt kê, websocket thấy (log bị Solana cắt ở 10KB nên không decode được) hoặc PumpPortal báo → `getTransaction(signature)` (1 credit, dedup theo signature) → lấy **pool + slot** từ bản sao event qua self‑CPI, hoặc từ account của instruction `migrate`/`migrate_v2`; đọc `withdraw_authority` thật và tự re‑subscribe nếu địa chỉ đoán sai. |
 | Recorder | `bot/app/recorder.py` | Đếm theo giờ, registry migration (mint, pool, slot), JSONL xoay theo ngày. |
 | Harvester | `bot/app/gecko.py`, `recorder.py` | Sau 25h, kéo nến 1 phút 24h đầu của pool PumpSwap; tự tra pool theo mint nếu chỉ thấy qua PumpPortal. |
 | Metrics | `bot/app/survivor.py` | Return net theo (delay vào × thời gian giữ), max drawdown, độ cũ của giá thoát, volume buckets, lottery detector, **verdict đăng ký trước**. |
@@ -111,3 +112,12 @@ Chạy `python -m app.analyze data/survivor.jsonl --cost_bps 500` để xem kế
 ## Pháp lý (Việt Nam)
 
 Nghị định 284/2026/NĐ‑CP (16/7/2026, hiệu lực 1/9/2026): cá nhân giao dịch tài sản mã hóa không qua tổ chức được Bộ Tài chính cấp phép bị phạt 30–50 triệu VND; thu thập/bán dữ liệu tài khoản trái phép 150–200 triệu. Repo này **chỉ ghi dữ liệu công khai on‑chain và không đặt lệnh**. Hỏi luật sư trước khi (a) giao dịch thật từ VN hoặc (b) bán dữ liệu có thông tin ví.
+
+## Đo thực tế (06/10/2026, 145 tx migrate từ RPC công khai)
+
+* On‑chain có ≈ **67 migration pump.fun / giờ**; PumpPortal chỉ relay ≈ 35/giờ và ≈3% message ghép sai mint vào signature. Không được dùng PumpPortal làm nguồn đếm.
+* Authority ký ≈100 tx/giờ, 1/3 thất bại (nhiều bot đua gọi `migrate`, permissionless: 53 ví ký khác nhau, ví lớn nhất 32%). Không có keeper cố định để subscribe.
+* `migrate_v2` chiếm 94%; ở 46% tx authority được nạp qua lookup table nên `logsSubscribe` không thấy. `getSignaturesForAddress` liệt kê đủ 100% → poller là nguồn chính.
+* Event `CompletePumpAmmMigrationEvent`: trong log 31%, chỉ qua self‑CPI 66%, chỉ còn account của instruction 3% (bản `migrate` cũ, log bị cắt). Decoder cần cả ba đường.
+* Một số curve quote bằng stablecoin (`sol_amount` ≈ 0.02): lọc theo `quote_mint` khi phân tích.
+

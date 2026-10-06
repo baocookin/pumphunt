@@ -38,13 +38,28 @@ class FakeGecko:
 
 
 class FakeRpc:
-    def __init__(self, txs):
+    def __init__(self, txs, signatures=None):
         self.txs = txs
         self.calls = 0
+        self.signatures = signatures or []  # newest first, like the RPC
+        self.sig_calls = []
 
     async def get_transaction(self, signature):
         self.calls += 1
         return self.txs.get(signature)
+
+    async def get_signatures(self, address, limit=1000, before=None, until=None):
+        self.sig_calls.append((address, limit, before, until))
+        out = []
+        for s in self.signatures:
+            if s["signature"] == until:
+                break
+            out.append(s)
+        return out[:limit]
+
+
+def sig(s, bt, err=None):
+    return {"signature": s, "blockTime": bt, "err": err}
 
 
 class FakeFeed:
@@ -153,7 +168,7 @@ def test_rpc_confirmation_fills_pool_and_learns_authority(rec):
     assert asyncio.run(rec.confirm_migration("sig1", t, delays=(0,))) is True
     row = rec.store.migrations()[0]
     assert row["pool"] == PK_B and row["slot"] == 4242 and row["source"] == "rpc"
-    assert row["sol_amount"] == 85.0 and row["ts"] == t
+    assert row["sol_amount"] == 85.0 and row["ts"] == t and row["quote_mint"] == PK_B
     assert rec.rpc_stats["confirmed"] == 1 and rec.rpc_stats["withdraw_authority"] == WA
     assert rec.rpc_stats["via"] == {"log": 1, "cpi": 0, "accounts": 0}
     assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}
@@ -222,7 +237,10 @@ def test_websocket_notification_without_event_is_confirmed_once(rec):
 
     asyncio.run(run())
     assert rec.rpc.calls == 1
-    assert rec.rpc_stats["triggered"] == {"portal": 0, "chain": 1} and rec.rpc_stats["confirmed"] == 1
+    assert (
+        rec.rpc_stats["triggered"] == {"portal": 0, "chain": 1, "poller": 0}
+        and rec.rpc_stats["confirmed"] == 1
+    )
     row = rec.store.migrations()[0]
     assert row["pool"] == acc["pool"] and row["slot"] == 11 and row["source"] == "rpc"
     assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}
@@ -242,7 +260,7 @@ def test_websocket_notification_is_ignored_when_not_worth_fetching(rec):
         await asyncio.gather(*rec._tasks)
 
     asyncio.run(run())
-    assert rec.rpc.calls == 0 and rec.rpc_stats["triggered"] == {"portal": 0, "chain": 0}
+    assert rec.rpc.calls == 0 and rec.rpc_stats["triggered"] == {"portal": 0, "chain": 0, "poller": 0}
     # a migrate decoded from the logs claims its signature, so PumpPortal does not re-fetch it
     t = 1_700_000_000.0
     rec.on_chain(mig(t, mint="MX", pool="PX"))
@@ -285,6 +303,82 @@ def test_dominant_migrate_signer_gets_subscribed(rec):
     assert rec.feed.mentions == [rec.cfg.migration_authority, acc["user"]] == rec.mentions()
     assert rec.rpc_stats["migrate_users"] == {acc["user"]: SIGNER_MIN_N + 1}
     assert rec.rpc_stats["triggered"]["chain"] == 1 and rec.rpc_stats["confirmed"] == SIGNER_MIN_N + 1
+
+
+def test_poller_confirms_new_signatures_once_and_keeps_a_cursor(rec):
+    now = 1_700_000_000.0
+    tx_a = fake_migrate_tx(PK_A, PK_B, WA, slot=1)
+    tx_b = fake_migrate_tx(PK_A, PK_B, WA, slot=2)
+    rec.feed = FakeFeed(notifications=5)
+    rec.rpc = FakeRpc(
+        {"sA": tx_a, "sB": tx_b},
+        signatures=[
+            sig("sA", now - 10),
+            sig("sF", now - 20, err={"x": 1}),
+            sig("sW", now - 30),
+            sig("sB", now - 40),
+        ],
+    )
+    rec._claim("sW")  # the websocket already fetched this one
+
+    async def run():
+        n = await rec.poll_once(now=now)
+        await asyncio.gather(*rec._tasks)
+        return n
+
+    assert asyncio.run(run()) == 2
+    assert (
+        rec.rpc.calls == 2 and rec.rpc_stats["triggered"]["poller"] == 2 and rec.rpc_stats["confirmed"] == 2
+    )
+    st = rec.rpc_stats["poller"]
+    assert st["polls"] == 1 and st["listed"] == 4 and st["skipped_failed"] == 1 and st["cursor"] == "sA"
+    assert rec.store.get_kv("poller_cursor") == "sA" and st["backfill_from"] == now - rec.cfg.backfill_s
+    assert rec.rpc.sig_calls == [(rec.cfg.migration_authority, 1000, None, None)]
+    row = rec.store.migrations()[0]
+    assert row["pool"] == PK_B and row["ts"] == now - 40  # oldest tx first: the row keeps its block time
+    # next poll: only signatures newer than the cursor are listed, nothing new to do
+    assert asyncio.run(rec.poll_once(now=now + 30)) == 0
+    assert rec.rpc.sig_calls[-1] == (rec.cfg.migration_authority, 1000, None, "sA")
+    assert rec.rpc.calls == 2 and rec.rpc_stats["poller"]["cursor"] == "sA"
+
+
+def test_poller_cold_start_stays_inside_the_backfill_window(rec):
+    now = 1_700_000_000.0
+    rec.cfg.backfill_s = 3600
+    rec.feed = FakeFeed()
+    rec.rpc = FakeRpc({}, signatures=[sig("new", now - 100), sig("old", now - 7200)])
+    assert asyncio.run(rec.poll_once(now=now)) == 1
+    assert rec.rpc_stats["poller"]["listed"] == 1 and rec.rpc_stats["poller"]["cursor"] == "new"
+    assert rec._claim("old") is True  # never touched
+
+
+def test_prime_claims_skips_confirmed_rows_but_not_pool_less_ones(rec):
+    t = 1_700_000_000.0
+    rec.on_chain(mig(t, mint="M1", pool="P1"))  # signature "s", has pool
+    rec.on_portal(portal_mig(t, mint="M2", signature="s2"))  # no pool yet
+    fresh = Recorder(rec.cfg, rec.store)
+    assert fresh.prime_claims() == 1
+    assert fresh._claim("s") is False and fresh._claim("s2") is True
+
+
+def test_mislabeled_portal_rows_are_dropped_or_refused(rec):
+    t = 1_700_000_000.0
+    tx = fake_migrate_tx(PK_A, PK_B, WA, slot=3)  # the chain says this tx migrated PK_A
+    rec.feed = FakeFeed(notifications=5)
+    rec.rpc = FakeRpc({"sX": tx, "sY": tx})
+    # PumpPortal first, with the wrong mint: the phantom row goes once the chain answers
+    rec.on_portal(portal_mig(t, mint="WRONG", signature="sX"))
+    assert [r["mint"] for r in rec.store.migrations()] == ["WRONG"]
+    assert asyncio.run(rec.confirm_migration("sX", t, delays=(0,))) is True
+    assert [r["mint"] for r in rec.store.migrations()] == [PK_A]
+    assert rec.rpc_stats["portal_mislabeled"] == 1
+    # chain first, PumpPortal later with the wrong mint: the row is never created
+    assert asyncio.run(rec.confirm_migration("sY", t, delays=(0,))) is True
+    rec.on_portal(portal_mig(t + 1, mint="WRONG2", signature="sY"))
+    assert [r["mint"] for r in rec.store.migrations()] == [PK_A]
+    assert rec.rpc_stats["portal_mislabeled"] == 2
+    # a row that already has a pool is never dropped
+    assert rec.store.drop_migration(PK_A) is False
 
 
 def test_rpc_confirmation_records_why_a_tx_is_not_a_migration(rec):

@@ -15,6 +15,43 @@ from app.rpc import (
 WA = fake_pubkey(777)
 
 
+class _Resp:
+    def __init__(self, result):
+        self._r = result
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"jsonrpc": "2.0", "id": 1, "result": self._r}
+
+
+class _Client:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def post(self, url, json):
+        self.calls.append((url, json))
+        return _Resp(self.result)
+
+
+def test_get_signatures_request_shape_and_empty_result():
+    import asyncio
+
+    from app.rpc import SolanaRpc
+
+    c = _Client(None)
+    rpc = SolanaRpc(c, "https://rpc.example")
+    assert asyncio.run(rpc.get_signatures("ADDR", limit=50, before="B", until="U")) == []
+    url, body = c.calls[0]
+    assert url == "https://rpc.example" and body["method"] == "getSignaturesForAddress"
+    assert body["params"] == ["ADDR", {"limit": 50, "commitment": "confirmed", "before": "B", "until": "U"}]
+    c.result = [{"signature": "s1", "err": None, "blockTime": 5}]
+    assert asyncio.run(rpc.get_signatures("ADDR"))[0]["signature"] == "s1"
+    assert c.calls[-1][1]["params"][1] == {"limit": 1000, "commitment": "confirmed"}
+
+
 def test_http_url_from_ws():
     assert (
         http_url_from_ws("wss://mainnet.helius-rpc.com/?api-key=k")

@@ -24,7 +24,17 @@ def _merge_pool(existing: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]
     if existing.get("pool") or not row.get("pool"):
         return None
     merged = dict(existing)
-    for k in ("pool", "slot", "signature", "chain_ts", "sol_amount", "mint_amount", "bonding_curve", "user"):
+    for k in (
+        "pool",
+        "slot",
+        "signature",
+        "chain_ts",
+        "sol_amount",
+        "mint_amount",
+        "bonding_curve",
+        "user",
+        "quote_mint",
+    ):
         if row.get(k) is not None:
             merged[k] = row[k]
     merged["source"] = row.get("source", merged.get("source"))
@@ -40,8 +50,11 @@ class Store(Protocol):
     def pending_harvest(self, before_ts: float, limit: int) -> list[dict[str, Any]]: ...
     def mark_harvested(self, mint: str, metrics: dict[str, Any]) -> None: ...
     def survivor_rows(self, limit: int = MAX_SURVIVOR_ROWS) -> list[dict[str, Any]]: ...
+    def drop_migration(self, mint: str) -> bool: ...
     def set_status(self, **kv: Any) -> None: ...
     def status(self) -> dict[str, Any]: ...
+    def get_kv(self, key: str) -> str | None: ...
+    def set_kv(self, key: str, value: str) -> None: ...
 
 
 class MemoryStore:
@@ -50,6 +63,7 @@ class MemoryStore:
         self._migrations: dict[str, dict[str, Any]] = {}
         self._survivor: list[dict[str, Any]] = []
         self._status: dict[str, Any] = {}
+        self._kv: dict[str, str] = {}
 
     def incr(self, name: str, hour: str, n: int = 1) -> None:
         self._counters.setdefault(name, {})
@@ -93,15 +107,35 @@ class MemoryStore:
     def survivor_rows(self, limit: int = MAX_SURVIVOR_ROWS) -> list[dict[str, Any]]:
         return self._survivor[-limit:]
 
+    def drop_migration(self, mint: str) -> bool:
+        """Remove a sighting that never got a pool (a mislabeled PumpPortal row). True if removed."""
+        row = self._migrations.get(mint)
+        if row is None or row.get("pool"):
+            return False
+        del self._migrations[mint]
+        return True
+
     def set_status(self, **kv: Any) -> None:
         self._status.update(kv)
 
     def status(self) -> dict[str, Any]:
         return dict(self._status)
 
+    def get_kv(self, key: str) -> str | None:
+        return self._kv.get(key)
+
+    def set_kv(self, key: str, value: str) -> None:
+        self._kv[key] = value
+
 
 class RedisStore:
-    K_MIG, K_PENDING, K_SURV, K_STATUS = "ph:migrations", "ph:pending", "ph:survivor", "ph:status"
+    K_MIG, K_PENDING, K_SURV, K_STATUS, K_KV = (
+        "ph:migrations",
+        "ph:pending",
+        "ph:survivor",
+        "ph:status",
+        "ph:kv",
+    )
 
     def __init__(self, url: str) -> None:
         import redis
@@ -163,11 +197,27 @@ class RedisStore:
     def survivor_rows(self, limit: int = MAX_SURVIVOR_ROWS) -> list[dict[str, Any]]:
         return [json.loads(v) for v in self.r.lrange(self.K_SURV, -limit, -1)]
 
+    def drop_migration(self, mint: str) -> bool:
+        raw = self.r.hget(self.K_MIG, mint)
+        if not raw or json.loads(raw).get("pool"):
+            return False
+        p = self.r.pipeline()
+        p.hdel(self.K_MIG, mint)
+        p.zrem(self.K_PENDING, mint)
+        p.execute()
+        return True
+
     def set_status(self, **kv: Any) -> None:
         self.r.hset(self.K_STATUS, mapping={k: json.dumps(v) for k, v in kv.items()})
 
     def status(self) -> dict[str, Any]:
         return {k: json.loads(v) for k, v in self.r.hgetall(self.K_STATUS).items()}
+
+    def get_kv(self, key: str) -> str | None:
+        return self.r.hget(self.K_KV, key)
+
+    def set_kv(self, key: str, value: str) -> None:
+        self.r.hset(self.K_KV, key, value)
 
 
 def make_store(redis_url: str | None) -> Store:
