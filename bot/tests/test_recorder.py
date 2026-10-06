@@ -631,8 +631,14 @@ def test_harvester_adds_executable_fills_and_meters_credits(rec):
     )
     assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "5"
     # the summary carries a per-size executable table and its own verdict
-    s = summarize(rec.store.survivor_rows(), [0, 5], [1, 5], [0.5, 1])
+    s = summarize(
+        rec.store.survivor_rows(), [0, 5], [1, 5], [0.5, 1.0]
+    )  # pydantic hands sizes over as floats
     assert s["with_fills"] == 1 and s["fills"]["1"]["d0_h5"]["n"] == 1 and s["fill_primary_size"] == "1"
+    # rows written by an earlier build keyed "1.0" still count
+    legacy = {"mint": "L", "pool": "P", "fills": {"d0_h5": {"1.0": {"net": 0.25}}}}
+    s2 = summarize([legacy], [0], [5], [1.0])
+    assert s2["fills"]["1"]["d0_h5"]["n"] == 1
     assert s["verdict_fill"]["status"] == "INSUFFICIENT"
 
 
