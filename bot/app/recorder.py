@@ -567,7 +567,12 @@ class Recorder:
 
     async def run_harvester(self, client: httpx.AsyncClient) -> None:
         self.gecko = GeckoTerminal(
-            client, self.cfg.gecko_base_url, self.cfg.gecko_rpm, candle_minutes=self.cfg.gecko_candle_minutes
+            client,
+            self.cfg.gecko_base_url,
+            self.cfg.gecko_rpm,
+            candle_minutes=self.cfg.gecko_candle_minutes,
+            api_key=self.cfg.gecko_api_key,
+            api_key_header=self.cfg.gecko_api_key_header,
         )
         while True:
             try:

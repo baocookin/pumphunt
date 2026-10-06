@@ -258,6 +258,11 @@ def test_gecko_limiter_adapts_and_candles_default_to_five_minutes(monkeypatch):
     g1 = GeckoTerminal(c, "https://g", rpm=100_000, candle_minutes=1)
     asyncio.run(g1.ohlcv_minute("P", 50))
     assert c.params[-1]["aggregate"] == 1
+    # a CoinGecko plan key goes in the header the plan expects; the public API sends none
+    keyed = GeckoTerminal(
+        c, "https://pro-api.coingecko.com/api/v3/onchain", api_key="K", api_key_header="x-cg-pro-api-key"
+    )
+    assert keyed.headers["x-cg-pro-api-key"] == "K" and "x-cg-pro-api-key" not in g1.headers
 
 
 def test_api_routes_under_prefix(monkeypatch, tmp_path):
