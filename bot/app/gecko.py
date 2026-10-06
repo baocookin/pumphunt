@@ -79,9 +79,20 @@ def pick_pool(pools: list[dict[str, Any]]) -> str | None:
 
 
 class GeckoTerminal:
-    def __init__(self, client: httpx.AsyncClient, base_url: str, rpm: int = 25, candle_minutes: int = 5):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        rpm: int = 25,
+        candle_minutes: int = 5,
+        api_key: str | None = None,
+        api_key_header: str = "x-cg-pro-api-key",
+    ):
         self.c = client
         self.base = base_url.rstrip("/")
+        self.headers = {"accept": "application/json;version=20230302"}
+        if api_key:
+            self.headers[api_key_header] = api_key
         self.rl = RateLimiter(rpm)
         # 5-minute candles put a whole 24h window (288 candles) in one call; 1-minute needs two.
         # Every entry delay and horizon we test is a multiple of 5 minutes, so nothing is lost.
@@ -95,9 +106,7 @@ class GeckoTerminal:
         for attempt in range(4):
             await self.rl.wait()
             self.stats["calls"] += 1
-            r = await self.c.get(
-                f"{self.base}{path}", params=params, headers={"accept": "application/json;version=20230302"}
-            )
+            r = await self.c.get(f"{self.base}{path}", params=params, headers=self.headers)
             if r.status_code == 404:
                 self.stats["not_found"] += 1
                 self.rl.accepted()

@@ -194,7 +194,7 @@ async def debug_tx(signature: str):
 
 @api.get("/config")
 def config():
-    return settings.model_dump(exclude={"pumpportal_api_key", "redis_url", "solana_ws_url"})
+    return settings.model_dump(exclude={"pumpportal_api_key", "redis_url", "solana_ws_url", "gecko_api_key"})
 
 
 app.include_router(api)

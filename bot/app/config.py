@@ -62,7 +62,12 @@ class Settings(BaseSettings):
     pumpportal_api_key: str | None = None
 
     # --- harvester: post-migration candles from GeckoTerminal (free, ~30 req/min) ---
+    # Free public GeckoTerminal API (no key). With a CoinGecko plan use the on-chain base URL
+    # and key instead: https://pro-api.coingecko.com/api/v3/onchain + x-cg-pro-api-key
+    # (Demo key: https://api.coingecko.com/api/v3/onchain + x-cg-demo-api-key), and raise gecko_rpm.
     gecko_base_url: str = "https://api.geckoterminal.com/api/v2"
+    gecko_api_key: str | None = None
+    gecko_api_key_header: str = "x-cg-pro-api-key"
     gecko_rpm: int = 20  # ceiling; the limiter adapts downward on 429s (the egress IP may be shared)
     gecko_candle_minutes: int = 5  # one call per 24h window; every tested delay/horizon is a multiple of 5
     harvest_after_s: float = 25 * 3600  # wait until the 24h window is fully observable
