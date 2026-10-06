@@ -7,3 +7,5 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `pytest` (unlike `python -m pytest`) does not put the cwd on sys.path; the `app` package lives here.
+pythonpath = ["."]
