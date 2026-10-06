@@ -394,14 +394,23 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
         # the sniper sample: empty, then one simulated launch
         empty = c.get("/api/sniper/summary").json()
         assert empty["launches"] == 0 and empty["prereg"]["verdict"] == "WAIT"
-        from app.sniper import CELLS, SIM_VERSION
+        from app.sniper import CELLS, SIM_VERSION, sampled
 
-        doc = {"mint": "L1", "t0": 2e9, "sim_version": SIM_VERSION, "nets": [-0.03] * len(CELLS)}
+        sig = next(f"s{i}" for i in range(10_000) if sampled(f"s{i}", 200))  # in S's registered 2%
+        doc = {
+            "mint": "L1",
+            "signature": sig,
+            "t0": 2e9,
+            "sim_version": SIM_VERSION,
+            "nets": [-0.03] * len(CELLS),
+        }
         api_mod.store.push_row("sniper", dict(doc, whys="x" * len(CELLS), mayhem=False, hold_peak=1.2))
         api_mod._SNIPER_CACHE["body"] = None
         one = c.get("/api/sniper/summary").json()
         assert one["launches"] == 1 and one["prereg"]["n"] == 1 and one["lottery"]["tickets"] == 1
         assert c.get("/api/sniper/rows?limit=5").json()[0]["mint"] == "L1"
+        g = c.get("/api/graduation/summary").json()
+        assert g["prereg"]["verdict"] == "WAIT" and set(g["levels"]) == {"50", "60", "70"}
         assert "solana_http_url" not in c.get("/api/config").json()
         assert c.get("/api/stats").json()["creates_24h_census"] == 0
         ex = c.get("/api/survivor/explore").json()

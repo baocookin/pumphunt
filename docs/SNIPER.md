@@ -258,7 +258,8 @@ Vì vậy, các số âm ở trên là **cận trên** cho người ngoài: th�
 **Mẫu**
 - Chọn `sha256(chữ ký lệnh tạo) mod 10.000 < 200`, tức 2%.
 - Cách chọn này xác định trước và không phụ thuộc kết quả của token.
-- Khoảng 1.100 launch/ngày, trong đó ~700 là classic quote SOL.
+- Khoảng 1.100–1.500 launch/ngày, trong đó ~700–900 là classic quote SOL.
+- Từ khi G được đăng ký (mục 8), census giữ 5% (< 500) theo cùng mã băm. S vẫn chỉ được kiểm định trên phần < 200; lưới thăm dò dùng cả 5%.
 
 **Đọc dữ liệu**
 
@@ -270,8 +271,8 @@ Hai giờ sau khi launch:
 - Cửa sổ 2 giờ chứa 95% số lần tốt nghiệp mà sniper vào kịp.
 
 **Ngân sách**
-- Tối đa 30.000 credit/ngày (`PH_SNIPER_DAILY_CREDITS`; lúc đầu 20.000, nâng sau khi đo được một curve sôi động tốn ~140 credit cho 1.200 tx).
-- Ngân sách fills của giả thuyết C giảm từ 300.000 xuống 270.000, nên trần tổng vẫn như cũ.
+- Tối đa 90.000 credit/ngày (`PH_SNIPER_DAILY_CREDITS`; lúc đầu 20.000, rồi 30.000 sau khi đo được một curve sôi động tốn ~140 credit cho 1.200 tx, rồi 90.000 khi mẫu lên 5% cho G).
+- Ngân sách fills của giả thuyết C giảm từ 300.000 xuống 210.000 (ở trạng thái ổn định fills dùng ~120.000/ngày), nên trần tổng vẫn 300.000.
 - Hết ngân sách trong ngày thì launch chờ tới ngày sau mới được đọc, không bị bỏ khỏi mẫu.
 
 **Lưu trữ**
@@ -360,6 +361,71 @@ Mỗi mint chỉ tính một lần.
 - KILL nghĩa là snipe từ bên ngoài, ở tốc độ của một bot tốt, là âm EV trên dữ liệu hiện tại.
 - PASS chỉ nghĩa là đáng đo tiếp ở quy mô lớn hơn. Dự án không giao dịch thật: theo Nghị định 284/2026, cá nhân Việt Nam giao dịch qua nhà cung cấp chưa được cấp phép có thể bị phạt.
 - Vị trí có lãi là vị trí của người tạo token (bundle ngay trong lệnh tạo). Dự án không theo đuổi hướng đó: nó là tạo token để bán cho người đến sau.
+
+## 8. Giả thuyết G: "chạy về tốt nghiệp" (đăng ký trước, 07/10/2026)
+
+**Ý tưởng.** Mua một bonding curve đã có X SOL thật, giữ tới khi nó tốt nghiệp, rồi bán ngay sau migration.
+
+**Cơ chế.**
+- Một curve đã hút được 60 SOL thường đi nốt quãng còn lại.
+- Giá lúc tốt nghiệp cao hơn giá ở mức 60 SOL là (115/90)² = 1,63 lần.
+- Vài giây đầu sau migration, pool vẫn giữ giá vì BOOST mua lại token trong 5 phút đầu.
+- Người trả tiền: những người mua quãng cuối của curve rồi giữ qua migration (ở token organic, vòng mua lúc T+0 bán lúc T+5 phút lỗ trung vị 48%), và những người chốt lời sớm trên curve.
+
+**Đo trước khi đăng ký** (chỉ là thăm dò):
+
+| Đại lượng | Kết quả | Nguồn |
+|---|---|---|
+| Xác suất tốt nghiệp sau khi chạm X | 59% (X=50), 73% (X=60), 84% (X=70) | 77.043 launch classic 27–29/9 |
+| Giá 3 giây sau migration so với giá tốt nghiệp | trung vị 1,006×, p10 0,77×; 11% dưới 0,8× | 602 token organic ngày 4–5/10 |
+| Pool "đầy" mất 30% SOL thật | 3,1% trong 5 giây, 11% trong 30 giây | 5.473 pool tháng 9 |
+| EV khi vào ở 60 SOL (có tính giá thoát thực tế) | +23,8% | |
+| EV khi vào trễ thêm 3 SOL | +20,6% (X=50: +29,9%, X=70: +10,9%, X=80: +1,9%) | |
+
+Mức 80 SOL gần như hết lãi. Nhiều khả năng bot đã đua ở đó.
+
+**Điều chưa biết, và là lý do phải kiểm định:**
+- Người ngoài có vào kịp không: curve có thể nhảy qua X trong một lệnh, hoặc hoàn tất ngay trong slot kế tiếp.
+- Những curve thất bại rơi về đâu.
+- Vài giây đầu sau migration có còn giữ giá trên dữ liệu mới không.
+
+**Mẫu.**
+- Census lấy mẫu băm 5% từ khi G được đăng ký: `sha256(chữ ký lệnh tạo) mod 10.000 < 500`.
+- Đây là tập cha của mẫu 2% của S. S vẫn chỉ được kiểm định trên phần dưới 200 của cùng mã băm.
+- Mẫu kiểm định của G: launch classic quote SOL có lệnh tạo từ `2026-10-07 03:00:00 UTC` (`PREREG_G_TS = 1791342000`), nằm trong mẫu 5%, có curve chạm X, và có vé.
+
+**Vé.**
+- Kích hoạt khi một giao dịch đưa curve lên ≥ 60 SOL thật lần đầu.
+- Mua 0,5 SOL (đã gồm phí 1,25%) ở cuối slot kế tiếp, tức độ trễ 1 slot, đứng sau mọi giao dịch của slot đó.
+- Nếu curve hoàn tất trước đó thì không có vé, ghi là "jump".
+
+**Thoát.**
+- Curve tốt nghiệp: bán toàn bộ token vào pool PumpSwap theo trạng thái pool 3 giây sau migration, trước lệnh bán của mình. Đây là trạng thái lúc vào của ô T+0 trong fills. Phí pool tính theo trạng thái đó (mặc định 1,25%), cộng 0,002 SOL phí mỗi vòng.
+- Curve không tốt nghiệp trong 2 giờ: bán ở trạng thái cuối cùng của curve.
+- Với các dòng chưa có reserve token lúc vào (trước bản này), reserve được suy ra từ trạng thái mở pool theo hằng số tích. Cách suy này định giá lệnh bán thấp hơn thực tế nếu BOOST mua bằng phần reserve ảo.
+
+**Đại lượng đo.** net = (SOL nhận về − 0,002) / 0,5 − 1. Lấy trung bình và KTC 95% theo xấp xỉ chuẩn. Kết quả ở `/api/graduation/summary` → `prereg`.
+
+**Tiêu chí** (chỉ áp dụng khi n ≥ 300 vé ở X = 60 SOL):
+- **KILL** nếu cận trên KTC 95% của trung bình < 0, hoặc 1% vé tốt nhất chiếm ≥ 50% tổng lãi.
+- **PASS** nếu cận dưới > 0, **và** trung bình vẫn > 0 ở X = 50 và X = 70 (cùng luật).
+- Các trường hợp còn lại: INCONCLUSIVE.
+
+**Báo kèm, không kiểm định:**
+- tỷ lệ "jump";
+- xác suất tốt nghiệp khi đã có vé;
+- lối thoát lúc 5 phút sau migration (`t5m`, sau BOOST);
+- các mức 50 và 70 SOL.
+
+**Không được làm.**
+- Đổi mức kích hoạt, độ trễ, cỡ vé, thời điểm thoát, chi phí hay ngưỡng sau khi thấy mẫu kiểm định.
+- Bỏ vé có kết quả xấu.
+- Coi số đo trước đăng ký (mục này) là bằng chứng.
+- Vé tốt nghiệp nhưng chưa có dòng survivor (pool được harvest 25 giờ sau migration) thì chờ, không được tính là thua.
+
+**Kết luận nghĩa là gì.**
+- KILL: lợi thế đo được trong lịch sử là ảo, vì không vào kịp, vì curve thất bại, hoặc vì giá sau migration không giữ.
+- PASS: đáng đo tiếp ở quy mô lớn hơn. Dự án vẫn không giao dịch thật (Nghị định 284/2026).
 
 ## Nguồn
 
