@@ -270,8 +270,9 @@ Hai giờ sau khi launch:
 - Cửa sổ 2 giờ chứa 95% số lần tốt nghiệp mà sniper vào kịp.
 
 **Ngân sách**
-- Tối đa 20.000 credit/ngày (`PH_SNIPER_DAILY_CREDITS`).
-- Ngân sách fills của giả thuyết C giảm từ 300.000 xuống 280.000, nên trần tổng vẫn như cũ.
+- Tối đa 30.000 credit/ngày (`PH_SNIPER_DAILY_CREDITS`; lúc đầu 20.000, nâng sau khi đo được một curve sôi động tốn ~140 credit cho 1.200 tx).
+- Ngân sách fills của giả thuyết C giảm từ 300.000 xuống 270.000, nên trần tổng vẫn như cũ.
+- Hết ngân sách trong ngày thì launch chờ tới ngày sau mới được đọc, không bị bỏ khỏi mẫu.
 
 **Lưu trữ**
 - Dữ liệu thô: `sniper-YYYY-MM-DD.jsonl` (gzip khi sang ngày).

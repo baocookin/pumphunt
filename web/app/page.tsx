@@ -50,7 +50,7 @@ type Summary = {
   fill_strata?: { real_in_sol?: Stratum[]; idle_at_entry?: Stratum[] };
   prereg?: Prereg;
 };
-type Hypothesis = { name: string; desc: string; since: number | null; eligible: number; members: number; n: number; median?: number | null; win_rate?: number | null; p10?: number | null; p90?: number | null; top2pct_share?: number | null; median_ci95?: [number, number] | null; verdict: { status: string; why: string } };
+type Hypothesis = { name: string; desc: string; since: number | null; eligible: number; members: number; n: number; median?: number | null; mean?: number | null; rug_share?: number | null; win_rate?: number | null; p10?: number | null; p90?: number | null; top2pct_share?: number | null; median_ci95?: [number, number] | null; verdict: { status: string; why: string } };
 type Prereg = { prereg_ts: number; explore_until: number; cell: string; size: string; c2: { min_real_sol: number; max_idle_s: number }; hypotheses: Hypothesis[] };
 type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number; fill_sizes_sol?: number[]; fills_daily_credits?: number; sniper_daily_credits?: number; sniper_sample_per_10k?: number };
 type SnipeCell = { n: number; mean?: number; mean_ci95?: [number, number] | null; median?: number; win_rate?: number; p_2x?: number; p_10x?: number; unresolved?: number };
@@ -63,6 +63,43 @@ type Sniper = {
   lottery?: { tickets: number; graduated_waiting: number; p_touch_10x: number | null; p_touch_100x: number | null; n_touch_10x: number; n_touch_100x: number };
   creates_24h_census?: number; creates_24h_portal?: number; recorder?: SniperRecorderStats | null;
 };
+
+type Bucket = { range: [number | null, number | null]; n: number; median?: number; mean?: number; win?: number; rug?: number; mean_early?: number | null; mean_late?: number | null };
+type ExploreSample = { all: { n: number; median?: number; mean?: number; win?: number; rug?: number }; features: Record<string, { n: number; buckets: Bucket[] | null }> };
+type ExploreC = { population: string; cell: string; window: [number, number]; samples: Record<string, ExploreSample> };
+type ExploreS = { window: [number, number]; cells: string[]; samples: Record<string, Record<string, ExploreSample>> };
+
+const num = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(2) : v.toPrecision(2));
+const rangeLabel = ([lo, hi]: [number | null, number | null]) =>
+  lo !== null && lo === hi ? `= ${num(lo)}` : lo === null ? `< ${num(hi ?? 0)}` : hi === null ? `≥ ${num(lo)}` : `${num(lo)} … ${num(hi)}`;
+
+function FeatureTable({ sample }: { sample?: ExploreSample }) {
+  if (!sample || !sample.all.n) return <p className="k">Chưa có dòng nào trong mẫu này.</p>;
+  const rows = Object.entries(sample.features).filter(([, f]) => f.buckets && f.buckets.length > 0);
+  const a = sample.all;
+  return (
+    <>
+      <p className="k">{`Toàn mẫu: n=${a.n} · trung vị ${signed(a.median)} · trung bình ${signed(a.mean)} · thắng ${pct(a.win, 0)} · mất gần hết ${pct(a.rug, 0)}`}</p>
+      <table>
+        <thead><tr><th>Đặc trưng</th><th>n</th><th>nhóm 1</th><th>nhóm 2</th><th>nhóm 3</th></tr></thead>
+        <tbody>
+          {rows.map(([name, f]) => (
+            <tr key={name}>
+              <td className="mono">{name}</td><td>{f.n}</td>
+              {(f.buckets ?? []).map((b, i) => (
+                <td key={i}>
+                  <span className="k">{rangeLabel(b.range)} · n={b.n}</span><br />
+                  med <span className={cls(b.median)}>{signed(b.median)}</span> · TB <span className={cls(b.mean)}>{signed(b.mean)}</span> · rug {pct(b.rug, 0)}<br />
+                  <span className="k">TB nửa đầu/nửa sau: {signed(b.mean_early ?? undefined)} / {signed(b.mean_late ?? undefined)}</span>
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
 
 const pct = (v?: number | null, d = 1) => (v === undefined || v === null || !Number.isFinite(v) ? "–" : `${(v * 100).toFixed(d)}%`);
 const signed = (v?: number) => (v === undefined || !Number.isFinite(v) ? "–" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
@@ -77,6 +114,9 @@ export default function Page() {
   const [cfg, setCfg] = useState<Config | null>(null);
   const [files, setFiles] = useState<DataFile[]>([]);
   const [sn, setSn] = useState<Sniper | null>(null);
+  const [exC, setExC] = useState<ExploreC | null>(null);
+  const [exS, setExS] = useState<ExploreS | null>(null);
+  const [exSample, setExSample] = useState<"window" | "before">("window");
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -93,6 +133,8 @@ export default function Page() {
         setStats(s); setMigs(m); setSum(su); setCfg(c); setErr(null);
         fetch(`${API}/files`).then((r) => r.json()).then((f) => { if (alive) setFiles(f.files ?? []); }).catch(() => {});
         fetch(`${API}/sniper/summary`).then((r) => r.json()).then((x) => { if (alive) setSn(x); }).catch(() => {});
+        fetch(`${API}/survivor/explore`).then((r) => r.json()).then((x) => { if (alive) setExC(x); }).catch(() => {});
+        fetch(`${API}/sniper/explore`).then((r) => r.json()).then((x) => { if (alive) setExS(x); }).catch(() => {});
       } catch (e) {
         if (alive) setErr(`Không kết nối được API tại ${API}: ${String(e)}`);
       }
@@ -180,7 +222,7 @@ export default function Page() {
 
       <h2>Giả thuyết đăng ký trước (chỉ dữ liệu sau thời điểm đăng ký mới được dùng để kiểm định)</h2>
       <table>
-        <thead><tr><th>Giả thuyết</th><th>Tập con</th><th>từ</th><th>n</th><th>median net</th><th>KTC 95% median</th><th>thắng</th><th>top 2%</th><th>Kết luận</th></tr></thead>
+        <thead><tr><th>Giả thuyết</th><th>Tập con</th><th>từ</th><th>n</th><th>median net</th><th>KTC 95% median</th><th>trung bình</th><th>mất gần hết</th><th>thắng</th><th>top 2%</th><th>Kết luận</th></tr></thead>
         <tbody>
           {(sum?.prereg?.hypotheses ?? []).map((h) => (
             <tr key={h.name}>
@@ -189,6 +231,7 @@ export default function Page() {
               <td>{h.n ?? 0}{h.since ? ` / ${h.eligible}` : ""}</td>
               <td className={cls(h.median ?? undefined)}>{signed(h.median ?? undefined)}</td>
               <td>{h.median_ci95 ? `${signed(h.median_ci95[0])} … ${signed(h.median_ci95[1])}` : "–"}</td>
+              <td className={cls(h.mean ?? undefined)}>{signed(h.mean ?? undefined)}</td><td>{pct(h.rug_share, 0)}</td>
               <td>{pct(h.win_rate, 0)}</td><td>{pct(h.top2pct_share, 0)}</td>
               <td className="mono">{h.verdict?.status}</td>
             </tr>
@@ -268,6 +311,18 @@ export default function Page() {
         </tbody>
       </table>
       <p className="k">EV là lãi/lỗ trung bình mỗi vé sau phí 1.25% mỗi chiều và 0.002 SOL phí ưu tiên/tip; slot ≈ 0.27 giây. p = chốt x2 / cắt 50% / bán sau 60 giây; tpN = chốt xN, nếu không thì giữ tới tốt nghiệp hoặc hết cửa sổ 2 giờ; tN = bán sau N giây; hold = giữ.</p>
+
+      <h2>Thăm dò luật đặc trưng (nơi tìm luật, KHÔNG phải kiểm định)</h2>
+      <p className="k">
+        Mẫu:{" "}
+        <button onClick={() => setExSample("window")} disabled={exSample === "window"}>cửa sổ thăm dò đã đăng ký</button>{" "}
+        <button onClick={() => setExSample("before")} disabled={exSample === "before"}>trước thời điểm đăng ký</button>
+        {" · "}Luật chỉ được đăng ký khi trung bình (không chỉ trung vị) dương ở cả hai nửa: trung vị giấu đuôi rug (docs/RESEARCH.md).
+      </p>
+      <h3>{`C2: vào T+30 → giữ 1h, 1 SOL, khớp lệnh thật${exC ? ` (cửa sổ ${new Date(exC.window[0] * 1000).toISOString().slice(0, 10)} → ${new Date(exC.window[1] * 1000).toISOString().slice(0, 10)})` : ""}`}</h3>
+      <FeatureTable sample={exC?.samples[exSample]} />
+      <h3>{`Sniper: vé classic ở slot tạo+2, luật p (chốt x2 / cắt 50% / bán sau 60s)${exS ? ` (cửa sổ ${new Date(exS.window[0] * 1000).toISOString().slice(0, 10)} → ${new Date(exS.window[1] * 1000).toISOString().slice(0, 10)})` : ""}`}</h3>
+      <FeatureTable sample={exS?.samples[exSample]?.[exS.cells[0]]} />
 
       <h2>Harvester &amp; dữ liệu</h2>
       <div className="tiles">

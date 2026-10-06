@@ -404,3 +404,7 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
         assert c.get("/api/sniper/rows?limit=5").json()[0]["mint"] == "L1"
         assert "solana_http_url" not in c.get("/api/config").json()
         assert c.get("/api/stats").json()["creates_24h_census"] == 0
+        ex = c.get("/api/survivor/explore").json()
+        assert ex["population"] == "C2" and set(ex["samples"]) == {"window", "before"}
+        sx = c.get("/api/sniper/explore").json()
+        assert sx["samples"]["window"][sx["cells"][0]]["all"]["n"] == 0  # the launch is from 2033
