@@ -22,6 +22,11 @@ BPS = 10_000
 LAMPORTS = 1_000_000_000
 
 
+def size_key(size: float) -> str:
+    """Stable dict key for a position size: 1 and 1.0 are both "1"."""
+    return f"{float(size):g}"
+
+
 def fee(amount: int, bps: int) -> int:
     """PumpSwap rounds every fee component up."""
     return -(-amount * bps // BPS)
@@ -169,7 +174,7 @@ def compute_fills(
                 out[key] = None
                 continue
             out[key] = {
-                str(size): simulate_cell(swaps, t_in, t_out, int(size * LAMPORTS), tx_fee, latency_s)
+                size_key(size): simulate_cell(swaps, t_in, t_out, int(size * LAMPORTS), tx_fee, latency_s)
                 for size in sizes_sol
             }
     return out

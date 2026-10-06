@@ -78,10 +78,13 @@ class Settings(BaseSettings):
 
     # --- executable fills: swap-level simulation on PumpSwap reserves (needs RPC credits) ---
     fills_enabled: bool = True
-    fills_full_window_min: int = 120  # every swap in this window after migration is fetched
-    fills_max_swaps: int = 400  # cap on transactions fetched per pool inside that window
+    # Measured in production: busy pools hit the cap, so credits per pool ~= cap + pages + points.
+    # 60 min / 150 tx keeps ~1,200 pools/day near 200k credits/day (~6M/month on a 10M plan);
+    # entry/exit states stay exact (one tx per decision time), only the drawdown path thins out.
+    fills_full_window_min: int = 60  # every swap in this window after migration is fetched
+    fills_max_swaps: int = 150  # cap on transactions fetched per pool inside that window
     fills_max_pages: int = 25  # signature pages (1000 each) per pool
-    fills_daily_credits: int = 250_000  # RPC credits the harvester may spend per UTC day
+    fills_daily_credits: int = 200_000  # RPC credits the harvester may spend per UTC day
     fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction

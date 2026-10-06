@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from statistics import median
 from typing import Any
 
+from .fills import size_key
 from .gecko import Candle
 
 
@@ -152,14 +153,15 @@ def summarize(
     # executable fills: same grid, one table per position size, net of impact and fees
     fills: dict[str, dict[str, dict[str, Any]]] = {}
     for size in sizes_sol:
-        key_s = str(size)
+        key_s = size_key(size)
         fills[key_s] = {}
         for d in delays_min:
             for h in horizons_min:
                 key = f"d{d}_h{h}"
                 nets = []
                 for r in rows:
-                    cell = ((r.get("fills") or {}).get(key) or {}).get(key_s)
+                    by_size = (r.get("fills") or {}).get(key) or {}
+                    cell = by_size.get(key_s) or by_size.get(str(float(size)))  # rows written as "1.0"
                     if cell and cell.get("net") is not None:
                         nets.append(cell["net"])
                 fills[key_s][key] = _cell_stats(nets)

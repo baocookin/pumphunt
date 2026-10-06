@@ -73,6 +73,7 @@ def test_compute_fills_grid_blanks_the_future():
     assert set(grid) == {"d0_h1", "d0_h60", "d5_h1", "d5_h60"}
     assert grid["d0_h60"] is None and grid["d5_h60"] is None  # not observable yet
     assert set(grid["d0_h1"]) == {"0.5", "1"} and grid["d0_h1"]["1"]["net"] < 0  # fees alone lose money
+    assert set(compute_fills(swaps, t0, [0], [1], [1.0, 5.0])["d0_h1"]) == {"1", "5"}  # floats -> short keys
     # a bigger order takes more of the pool: more impact, worse net
     assert grid["d0_h1"]["1"]["impact_in"] > grid["d0_h1"]["0.5"]["impact_in"]
     assert grid["d0_h1"]["1"]["net"] < grid["d0_h1"]["0.5"]["net"]

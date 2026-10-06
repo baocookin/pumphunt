@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
+from .fills import size_key
 from .recorder import Recorder
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import hour_key, make_store
@@ -167,7 +168,10 @@ def survivor_csv(rows, delays, horizons, sizes=()) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
     head = _SURVIVOR_COLS + [f"{c}_{m}" for c in cells for m in ("net", "gross", "mdd", "exit_stale_s")]
-    head += [f"fill{s}_{c}_net" for s in sizes for c in cells] + ["swaps_fetched", "swaps_window_truncated"]
+    head += [f"fill{size_key(s)}_{c}_net" for s in sizes for c in cells] + [
+        "swaps_fetched",
+        "swaps_window_truncated",
+    ]
     w.writerow(head)
     for r in latest_by_mint(rows):
         line = [r.get(k) for k in _SURVIVOR_COLS]
@@ -177,7 +181,8 @@ def survivor_csv(rows, delays, horizons, sizes=()) -> str:
         fills = r.get("fills") or {}
         for s in sizes:
             for c in cells:
-                line.append(((fills.get(c) or {}).get(str(s)) or {}).get("net"))
+                by_size = fills.get(c) or {}
+                line.append((by_size.get(size_key(s)) or by_size.get(str(float(s))) or {}).get("net"))
         sw = r.get("swaps") or {}
         line += [sw.get("swaps"), sw.get("window_truncated")]
         w.writerow(line)
