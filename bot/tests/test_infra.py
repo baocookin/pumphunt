@@ -391,3 +391,16 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
         (tmp_path / "holders-2026-10-06.jsonl").unlink()
         files = c.get("/api/files").json()
         assert files["dir"] == str(tmp_path) and {f["name"] for f in files["files"]} == {"index.html"}
+        # the sniper sample: empty, then one simulated launch
+        empty = c.get("/api/sniper/summary").json()
+        assert empty["launches"] == 0 and empty["prereg"]["verdict"] == "WAIT"
+        from app.sniper import CELLS, SIM_VERSION
+
+        doc = {"mint": "L1", "t0": 2e9, "sim_version": SIM_VERSION, "nets": [-0.03] * len(CELLS)}
+        api_mod.store.push_row("sniper", dict(doc, whys="x" * len(CELLS), mayhem=False, hold_peak=1.2))
+        api_mod._SNIPER_CACHE["body"] = None
+        one = c.get("/api/sniper/summary").json()
+        assert one["launches"] == 1 and one["prereg"]["n"] == 1 and one["lottery"]["tickets"] == 1
+        assert c.get("/api/sniper/rows?limit=5").json()[0]["mint"] == "L1"
+        assert "solana_http_url" not in c.get("/api/config").json()
+        assert c.get("/api/stats").json()["creates_24h_census"] == 0

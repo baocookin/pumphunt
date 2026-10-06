@@ -52,7 +52,17 @@ type Summary = {
 };
 type Hypothesis = { name: string; desc: string; since: number | null; eligible: number; members: number; n: number; median?: number | null; win_rate?: number | null; p10?: number | null; p90?: number | null; top2pct_share?: number | null; median_ci95?: [number, number] | null; verdict: { status: string; why: string } };
 type Prereg = { prereg_ts: number; explore_until: number; cell: string; size: string; c2: { min_real_sol: number; max_idle_s: number }; hypotheses: Hypothesis[] };
-type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number; fill_sizes_sol?: number[]; fills_daily_credits?: number };
+type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number; fill_sizes_sol?: number[]; fills_daily_credits?: number; sniper_daily_credits?: number; sniper_sample_per_10k?: number };
+type SnipeCell = { n: number; mean?: number; mean_ci95?: [number, number] | null; median?: number; win_rate?: number; p_2x?: number; p_10x?: number; unresolved?: number };
+type SniperRecorderStats = { polls?: number; creates_seen?: number; sampled?: number; census_gaps?: number; harvested?: number; not_sol?: number; errors?: number; credits_today?: number; paused?: boolean; queued?: number; last_poll_ts?: number; last_error?: string | null };
+type Sniper = {
+  launches: number; classic: number; mayhem: number; graduated: number; with_chain_breaks: number; truncated: number;
+  grid: { latencies: number[]; exits: Record<string, [number | null, number | null, number | null]>; size: number };
+  cells: Record<string, Record<string, SnipeCell>>;
+  prereg: SnipeCell & { since: number; explore_until: number; cell: string; min_n: number; robust: Record<string, number | null>; verdict: string; top1pct_share?: number | null };
+  lottery?: { tickets: number; graduated_waiting: number; p_touch_10x: number | null; p_touch_100x: number | null; n_touch_10x: number; n_touch_100x: number };
+  creates_24h_census?: number; creates_24h_portal?: number; recorder?: SniperRecorderStats | null;
+};
 
 const pct = (v?: number | null, d = 1) => (v === undefined || v === null || !Number.isFinite(v) ? "–" : `${(v * 100).toFixed(d)}%`);
 const signed = (v?: number) => (v === undefined || !Number.isFinite(v) ? "–" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
@@ -66,6 +76,7 @@ export default function Page() {
   const [sum, setSum] = useState<Summary | null>(null);
   const [cfg, setCfg] = useState<Config | null>(null);
   const [files, setFiles] = useState<DataFile[]>([]);
+  const [sn, setSn] = useState<Sniper | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,6 +92,7 @@ export default function Page() {
         if (!alive) return;
         setStats(s); setMigs(m); setSum(su); setCfg(c); setErr(null);
         fetch(`${API}/files`).then((r) => r.json()).then((f) => { if (alive) setFiles(f.files ?? []); }).catch(() => {});
+        fetch(`${API}/sniper/summary`).then((r) => r.json()).then((x) => { if (alive) setSn(x); }).catch(() => {});
       } catch (e) {
         if (alive) setErr(`Không kết nối được API tại ${API}: ${String(e)}`);
       }
@@ -220,6 +232,43 @@ export default function Page() {
         ))}
       </div>
 
+      <h2>Sniper: mua vài slot sau khi token ra đời (giả thuyết S, docs/SNIPER.md)</h2>
+      <div className="tiles">
+        <div className={`tile verdict ${(sn?.prereg.verdict ?? "").toLowerCase()}`}>
+          <div className="k">{`S: vào cuối slot tạo+2, ${sn?.grid.size ?? 0.5} SOL, chốt x2 / cắt 50% / bán sau 60 giây, token classic từ ${sn ? new Date(sn.prereg.since * 1000).toISOString().slice(0, 16).replace("T", " ") : "…"}`}</div>
+          <div className="v">{sn?.prereg.verdict ?? "…"}</div>
+          <div className="k">{`n=${sn?.prereg.n ?? 0} / ${sn?.prereg.min_n ?? 2000} · EV ${signed(sn?.prereg.mean)}${sn?.prereg.mean_ci95 ? ` (KTC 95% ${signed(sn.prereg.mean_ci95[0])} … ${signed(sn.prereg.mean_ci95[1])})` : ""} · thắng ${pct(sn?.prereg.win_rate, 0)}`}</div>
+        </div>
+        <div className="tile">
+          <div className="k">Census on‑chain (mint authority) / 24h</div>
+          <div className="v">{sn?.creates_24h_census ?? "–"} <span className="k">PumpPortal {sn?.creates_24h_portal ?? "–"}</span></div>
+          <div className="k">{`lấy mẫu ${cfg?.sniper_sample_per_10k ? cfg.sniper_sample_per_10k / 100 : "–"}% · đã đọc ${sn?.recorder?.harvested ?? 0} (không phải SOL ${sn?.recorder?.not_sol ?? 0}) · chờ ${sn?.recorder?.queued ?? 0} · credit hôm nay ${sn?.recorder?.credits_today ?? 0}${cfg?.sniper_daily_credits ? ` / ${cfg.sniper_daily_credits}` : ""}${sn?.recorder?.paused ? " · TẠM DỪNG" : ""}`}</div>
+          <div className="k">{`launch có đường giá: ${sn?.classic ?? 0} classic · ${sn?.mayhem ?? 0} mayhem · ${sn?.graduated ?? 0} tốt nghiệp · đứt chuỗi ${sn?.with_chain_breaks ?? 0} · bị cắt ${sn?.truncated ?? 0}`}</div>
+          <div className="k mono">{sn?.recorder?.last_error ?? ""}</div>
+        </div>
+        <div className="tile">
+          <div className="k">Vé xổ số (giữ từ slot +2, thăm dò)</div>
+          <div className="v">{sn?.lottery ? `${sn.lottery.n_touch_100x} chạm x100` : "–"}</div>
+          <div className="k">{sn?.lottery ? `trên ${sn.lottery.tickets} vé · chạm x10: ${pct(sn.lottery.p_touch_10x, 2)} · x100: ${pct(sn.lottery.p_touch_100x, 3)} · ${sn.lottery.graduated_waiting} token tốt nghiệp chờ nến pool` : ""}</div>
+          <div className="k">Chạm = đỉnh nến 5 phút, không phải giá bán được.</div>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Thoát (classic, mọi mẫu, thăm dò)</th>{(sn?.grid.latencies ?? []).map((k) => <th key={k}>slot +{k}</th>)}</tr></thead>
+        <tbody>
+          {Object.keys(sn?.grid.exits ?? {}).map((e) => (
+            <tr key={e}>
+              <td className="mono">{e}</td>
+              {(sn?.grid.latencies ?? []).map((k) => {
+                const c = sn?.cells.classic?.[`k${k}_${e}`];
+                return <td key={k}>{c && c.n > 0 ? <>EV <span className={cls(c.mean)}>{signed(c.mean)}</span> · wr {pct(c.win_rate, 0)} · n={c.n}</> : <span className="k">n=0</span>}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="k">EV là lãi/lỗ trung bình mỗi vé sau phí 1.25% mỗi chiều và 0.002 SOL phí ưu tiên/tip; slot ≈ 0.27 giây. p = chốt x2 / cắt 50% / bán sau 60 giây; tpN = chốt xN, nếu không thì giữ tới tốt nghiệp hoặc hết cửa sổ 2 giờ; tN = bán sau N giây; hold = giữ.</p>
+
       <h2>Harvester &amp; dữ liệu</h2>
       <div className="tiles">
         <div className="tile">
@@ -244,7 +293,7 @@ export default function Page() {
         </div>
         <div className="tile">
           <div className="k">Xuất dữ liệu</div>
-          <div className="k"><a href={`${API}/export/survivor.csv`}>survivor.csv</a> · <a href={`${API}/export/survivor.jsonl`}>survivor.jsonl</a> · <a href={`${API}/export/migrations.jsonl`}>migrations.jsonl</a></div>
+          <div className="k"><a href={`${API}/export/survivor.csv`}>survivor.csv</a> · <a href={`${API}/export/survivor.jsonl`}>survivor.jsonl</a> · <a href={`${API}/export/migrations.jsonl`}>migrations.jsonl</a> · <a href={`${API}/sniper/rows?limit=5000`}>sniper rows</a></div>
           <div className="k">{sum?.no_data ? `không dữ liệu: ${Object.entries(sum.no_data).map(([k, v]) => `${k} ${v}`).join(" · ") || "0"}` : ""}</div>
         </div>
       </div>

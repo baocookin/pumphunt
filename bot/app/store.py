@@ -9,6 +9,7 @@ import time
 from typing import Any, Protocol
 
 MAX_SURVIVOR_ROWS = 200_000
+MAX_LIST_ROWS = 200_000  # per named row list (e.g. the sniper sample's results)
 
 
 def hour_key(ts: float) -> str:
@@ -79,6 +80,9 @@ class Store(Protocol):
     # expiring cache (e.g. a wallet's first funder)
     def cache_get(self, key: str) -> str | None: ...
     def cache_set(self, key: str, value: str, ttl_s: int) -> None: ...
+    # named append-only row lists, oldest first, capped at MAX_LIST_ROWS (e.g. sniper results)
+    def push_row(self, space: str, doc: dict[str, Any]) -> None: ...
+    def rows(self, space: str, limit: int = MAX_LIST_ROWS) -> list[dict[str, Any]]: ...
 
 
 class MemoryStore:
@@ -91,6 +95,7 @@ class MemoryStore:
         self._queues: dict[str, dict[str, float]] = {}
         self._docs: dict[str, dict[str, dict[str, Any]]] = {}
         self._cache: dict[str, tuple[str, float]] = {}
+        self._lists: dict[str, list[dict[str, Any]]] = {}
 
     def incr(self, name: str, hour: str, n: int = 1) -> None:
         self._counters.setdefault(name, {})
@@ -207,6 +212,14 @@ class MemoryStore:
 
     def cache_set(self, key: str, value: str, ttl_s: int) -> None:
         self._cache[key] = (value, time.time() + ttl_s)
+
+    def push_row(self, space: str, doc: dict[str, Any]) -> None:
+        rows = self._lists.setdefault(space, [])
+        rows.append(json.loads(json.dumps(doc)))
+        del rows[:-MAX_LIST_ROWS]
+
+    def rows(self, space: str, limit: int = MAX_LIST_ROWS) -> list[dict[str, Any]]:
+        return self._lists.get(space, [])[-limit:] if limit > 0 else []
 
 
 class RedisStore:
@@ -352,6 +365,17 @@ class RedisStore:
 
     def cache_set(self, key: str, value: str, ttl_s: int) -> None:
         self.r.set(f"ph:cache:{key}", value, ex=ttl_s)
+
+    def push_row(self, space: str, doc: dict[str, Any]) -> None:
+        p = self.r.pipeline()
+        p.rpush(f"ph:list:{space}", json.dumps(doc))
+        p.ltrim(f"ph:list:{space}", -MAX_LIST_ROWS, -1)
+        p.execute()
+
+    def rows(self, space: str, limit: int = MAX_LIST_ROWS) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        return [json.loads(v) for v in self.r.lrange(f"ph:list:{space}", -limit, -1)]
 
 
 def make_store(redis_url: str | None) -> Store:

@@ -40,6 +40,7 @@ from .holders import concentration, exit_power, group_share
 from .holders import snapshot as holder_snapshot
 from .jsonl import JsonlWriter
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
+from .sniper import SniperRecorder
 from .store import Store, hour_key
 from .survivor import FILLS_VERSION, compute_metrics, latest_by_mint
 from .swaps import SwapFetcher, encode_swaps, merge_swaps
@@ -133,6 +134,7 @@ class Recorder:
             "features_error": None,
         }
         self.fetcher: SwapFetcher | None = None
+        self.sniper: SniperRecorder | None = None
         self.task_errors: dict[str, dict[str, Any]] = {}  # loop name -> last crash, for the status page
         self.beats: dict[str, float] = {}  # loop name -> last sign of progress
         self._loops: dict[str, tuple[asyncio.Task, float | None]] = {}
@@ -923,6 +925,29 @@ class Recorder:
                 print(f"[harvest] error: {exc}")
             await asyncio.sleep(self.cfg.harvest_interval_s)
 
+    # ---- sniper sample (hypothesis S) ----
+    async def run_sniper(self) -> None:
+        """Census every `sniper_poll_s`, then read the sampled launches whose window has passed."""
+        assert self.sniper is not None
+        sn = self.sniper
+        print(f"[sniper] census of launches, {self.cfg.sniper_sample_per_10k / 100:g}% sampled")
+        while True:
+            self.beat("sniper")
+            try:
+                await sn.census_once()
+                self.beat("sniper")
+                n = await sn.harvest_once()
+                if n:
+                    print(f"[sniper] {n} launches read")
+            except httpx.HTTPError as exc:
+                sn.stats["errors"] += 1
+                sn.stats["last_error"] = describe_http_error(exc)
+            except Exception as exc:  # noqa: BLE001 - never let the sample stop
+                sn.stats["errors"] += 1
+                sn.stats["last_error"] = f"{type(exc).__name__}: {exc}"[:200]
+                print(f"[sniper] error: {exc}")
+            await asyncio.sleep(self.cfg.sniper_poll_s)
+
     # ---- status heartbeat ----
     async def run_status(self) -> None:
         while True:
@@ -940,6 +965,7 @@ class Recorder:
                 rpc={**self.rpc_stats, "transport": self.rpc.stats if self.rpc else None},
                 harvest=self.harvest_stats,
                 snapshots=self.snapshot_stats,
+                sniper=self.sniper.stats if self.sniper else None,
                 gecko=self.gecko.stats if self.gecko else None,
                 task_errors=self.task_errors,
                 loops=self.loop_ages(),
@@ -1045,6 +1071,9 @@ class Recorder:
                 tasks.append(self._supervise("harvester", harvester, stall_s=1800))
             if self.rpc is not None and self.cfg.holder_snapshots:
                 tasks.append(self._supervise("snapshots", self.run_snapshots, stall_s=300))
+            if self.rpc is not None and self.cfg.sniper_enabled:
+                self.sniper = SniperRecorder(self.cfg, self.store, self.rpc, self.cfg.data_dir)
+                tasks.append(self._supervise("sniper", self.run_sniper, stall_s=900))
             await asyncio.gather(*tasks)
 
 
