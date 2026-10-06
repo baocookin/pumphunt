@@ -59,6 +59,10 @@ class _Reader:
             return int.from_bytes(self.take(8), "little")
         if ty == "i64":
             return int.from_bytes(self.take(8), "little", signed=True)
+        if ty in ("u8", "u16", "u32", "u128"):
+            return int.from_bytes(self.take({"u8": 1, "u16": 2, "u32": 4, "u128": 16}[ty]), "little")
+        if ty == "i128":
+            return int.from_bytes(self.take(16), "little", signed=True)
         if ty == "bool":
             return self.take(1)[0] != 0
         if ty == "pubkey":
@@ -197,20 +201,26 @@ def decode_event(payload: bytes) -> dict[str, Any] | None:
 PREFIX = "Program data: "
 
 
-def parse_logs(logs: list[str]) -> list[dict[str, Any]]:
-    """Extract every pump.fun event from a transaction's log lines."""
-    events = []
+def parse_logs_payloads(logs: list[str]) -> list[bytes]:
+    """Raw `Program data:` payloads (any Anchor program) in log order."""
+    out = []
     for line in logs:
         if not line.startswith(PREFIX):
             continue
-        b64 = line[len(PREFIX) :]
         try:
-            payload = base64.b64decode(b64)
+            out.append(base64.b64decode(line[len(PREFIX) :]))
         except ValueError:
             continue
+    return out
+
+
+def parse_logs(logs: list[str]) -> list[dict[str, Any]]:
+    """Extract every pump.fun event from a transaction's log lines."""
+    events = []
+    for payload in parse_logs_payloads(logs):
         ev = decode_event(payload)
         if ev is not None:
-            ev["raw_b64"] = b64
+            ev["raw_b64"] = base64.b64encode(payload).decode()
             events.append(ev)
     return events
 

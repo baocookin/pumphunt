@@ -23,7 +23,7 @@ from .config import settings
 from .recorder import Recorder
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import hour_key, make_store
-from .survivor import summarize
+from .survivor import latest_by_mint, summarize
 
 store = make_store(settings.redis_url)
 
@@ -99,7 +99,9 @@ def migrations(limit: int = 100):
 
 @api.get("/survivor/summary")
 def survivor_summary():
-    return summarize(store.survivor_rows(), settings.entry_delays_min, settings.horizons_min)
+    return summarize(
+        store.survivor_rows(), settings.entry_delays_min, settings.horizons_min, settings.fill_sizes_sol
+    )
 
 
 @api.get("/survivor/rows")
@@ -158,24 +160,35 @@ _SURVIVOR_COLS = [
 ]
 
 
-def survivor_csv(rows, delays, horizons) -> str:
-    """One row per token, one column group per (entry delay, horizon) cell."""
+def survivor_csv(rows, delays, horizons, sizes=()) -> str:
+    """One row per token (latest harvest), one column group per (entry delay, horizon) cell for
+    the candle marks, then the executable net per position size, then swap coverage."""
     cells = [f"d{d}_h{h}" for d in delays for h in horizons]
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(_SURVIVOR_COLS + [f"{c}_{m}" for c in cells for m in ("net", "gross", "mdd", "exit_stale_s")])
-    for r in rows:
+    head = _SURVIVOR_COLS + [f"{c}_{m}" for c in cells for m in ("net", "gross", "mdd", "exit_stale_s")]
+    head += [f"fill{s}_{c}_net" for s in sizes for c in cells] + ["swaps_fetched", "swaps_window_truncated"]
+    w.writerow(head)
+    for r in latest_by_mint(rows):
         line = [r.get(k) for k in _SURVIVOR_COLS]
         for c in cells:
             cell = (r.get("cells") or {}).get(c) or {}
             line += [cell.get("net"), cell.get("gross"), cell.get("mdd"), cell.get("exit_stale_s")]
+        fills = r.get("fills") or {}
+        for s in sizes:
+            for c in cells:
+                line.append(((fills.get(c) or {}).get(str(s)) or {}).get("net"))
+        sw = r.get("swaps") or {}
+        line += [sw.get("swaps"), sw.get("window_truncated")]
         w.writerow(line)
     return buf.getvalue()
 
 
 @api.get("/export/survivor.csv")
 def export_survivor_csv():
-    text = survivor_csv(store.survivor_rows(), settings.entry_delays_min, settings.horizons_min)
+    text = survivor_csv(
+        store.survivor_rows(), settings.entry_delays_min, settings.horizons_min, settings.fill_sizes_sol
+    )
     return PlainTextResponse(text, media_type="text/csv")
 
 
