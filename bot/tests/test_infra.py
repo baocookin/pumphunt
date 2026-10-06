@@ -383,5 +383,11 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
             and got["curve_bundle_sol"] == "7.5"
             and got["fund_max_cluster"] == "3"
         )
+        (tmp_path / "holders-2026-10-06.jsonl").write_text('{"mint":"M1"}\n')
+        got = c.get("/api/export/file/holders-2026-10-06.jsonl")
+        assert got.status_code == 200 and got.text == '{"mint":"M1"}\n'
+        assert c.get("/api/export/file/index.html").status_code == 404  # only datasets
+        assert c.get("/api/export/file/..%2Fetc%2Fpasswd").status_code == 404
+        (tmp_path / "holders-2026-10-06.jsonl").unlink()
         files = c.get("/api/files").json()
         assert files["dir"] == str(tmp_path) and {f["name"] for f in files["files"]} == {"index.html"}
