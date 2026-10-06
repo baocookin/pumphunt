@@ -62,20 +62,32 @@ class GeckoTerminal:
         self.c = client
         self.base = base_url.rstrip("/")
         self.rl = RateLimiter(rpm)
+        self.stats = {"calls": 0, "rate_limited": 0, "not_found": 0, "errors": 0}
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """None only for a 404 (unknown pool/token). Persistent 429s raise, so the harvester
+        retries the row next cycle instead of recording an empty result as "no data"."""
+        r = None
         for attempt in range(4):
             await self.rl.wait()
+            self.stats["calls"] += 1
             r = await self.c.get(
                 f"{self.base}{path}", params=params, headers={"accept": "application/json;version=20230302"}
             )
             if r.status_code == 404:
+                self.stats["not_found"] += 1
                 return None
             if r.status_code == 429:
+                self.stats["rate_limited"] += 1
                 await asyncio.sleep(10 * (attempt + 1))
                 continue
+            if r.status_code >= 400:
+                self.stats["errors"] += 1
             r.raise_for_status()
             return r.json()
+        assert r is not None
+        self.stats["errors"] += 1
+        r.raise_for_status()  # the last 429: surfaces as httpx.HTTPStatusError
         return None
 
     async def pool_info(self, pool: str, network: str = "solana") -> dict[str, Any] | None:

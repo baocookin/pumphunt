@@ -48,20 +48,31 @@ def _volume(candles: Sequence[Candle], start: int, end: int) -> float:
 
 
 def compute_metrics(
-    candles: Sequence[Candle], t0: int, delays_min: Sequence[int], horizons_min: Sequence[int], cost_bps: int
+    candles: Sequence[Candle],
+    t0: int,
+    delays_min: Sequence[int],
+    horizons_min: Sequence[int],
+    cost_bps: int,
+    now: float | None = None,
 ) -> dict[str, Any]:
+    """`now` guards against reading the future: the AMM mark carries forward from the last
+    trade, so without it a 2-hour-old pool would happily report a 24-hour return."""
     cost = cost_bps / 10_000
     out: dict[str, Any] = {"t0": t0, "n_candles": len(candles), "cells": {}}
     if not candles:
         out["no_data"] = True
+        out["reason"] = "no_candles"  # the pool exists but nobody traded in the window
         return out
     for d in delays_min:
         t_in = t0 + d * 60
         p_in = _price_at(candles, t_in)
         for h in horizons_min:
             t_out = t_in + h * 60
-            p_out = _price_at(candles, t_out)
             key = f"d{d}_h{h}"
+            if now is not None and t_out > now:
+                out["cells"][key] = None  # horizon not observable yet
+                continue
+            p_out = _price_at(candles, t_out)
             if p_in is None or p_out is None or p_in <= 0:
                 out["cells"][key] = None
                 continue
@@ -80,7 +91,10 @@ def compute_metrics(
     out["vol_30_60m"] = _volume(candles, t0 + 1800, t0 + 3600)
     out["vol_1_6h"] = _volume(candles, t0 + 3600, t0 + 6 * 3600)
     out["vol_6_24h"] = _volume(candles, t0 + 6 * 3600, t0 + 24 * 3600)
-    out["alive_24h"] = out["vol_6_24h"] > 0 and _price_at(candles, t0 + 24 * 3600) is not None
+    if now is not None and t0 + 24 * 3600 > now:
+        out["alive_24h"] = None
+    else:
+        out["alive_24h"] = out["vol_6_24h"] > 0 and _price_at(candles, t0 + 24 * 3600) is not None
     return out
 
 
@@ -118,9 +132,15 @@ def summarize(
     harvested = len(rows)
     with_data = sum(1 for r in rows if not r.get("no_data"))
     alive = sum(1 for r in rows if r.get("alive_24h"))
+    no_data: dict[str, int] = {}
+    for r in rows:
+        if r.get("no_data"):
+            reason = str(r.get("reason") or "unknown")
+            no_data[reason] = no_data.get(reason, 0) + 1
     return {
         "harvested": harvested,
         "with_data": with_data,
+        "no_data": no_data,
         "alive_24h_rate": (alive / with_data) if with_data else 0.0,
         "cells": cells,
         "verdict": verdict(cells.get("d30_h60", {"n": 0})),

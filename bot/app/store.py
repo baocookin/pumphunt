@@ -59,6 +59,7 @@ class Store(Protocol):
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]: ...
     def migration_count(self) -> int: ...
     def pending_harvest(self, before_ts: float, limit: int) -> list[dict[str, Any]]: ...
+    def pending_counts(self, before_ts: float) -> tuple[int, int]: ...
     def mark_harvested(self, mint: str, metrics: dict[str, Any]) -> None: ...
     def survivor_rows(self, limit: int = MAX_SURVIVOR_ROWS) -> list[dict[str, Any]]: ...
     def drop_migration(self, mint: str) -> bool: ...
@@ -106,6 +107,11 @@ class MemoryStore:
     def pending_harvest(self, before_ts: float, limit: int) -> list[dict[str, Any]]:
         rows = [r for r in self._migrations.values() if not r["harvested"] and r["ts"] <= before_ts]
         return sorted(rows, key=lambda r: r["ts"])[:limit]
+
+    def pending_counts(self, before_ts: float) -> tuple[int, int]:
+        """(rows due for harvest now, rows not harvested yet at all)."""
+        rows = [r for r in self._migrations.values() if not r["harvested"]]
+        return sum(1 for r in rows if r["ts"] <= before_ts), len(rows)
 
     def mark_harvested(self, mint: str, metrics: dict[str, Any]) -> None:
         if mint in self._migrations:
@@ -192,6 +198,9 @@ class RedisStore:
         if not mints:
             return []
         return [json.loads(v) for v in self.r.hmget(self.K_MIG, mints) if v]
+
+    def pending_counts(self, before_ts: float) -> tuple[int, int]:
+        return int(self.r.zcount(self.K_PENDING, "-inf", before_ts)), int(self.r.zcard(self.K_PENDING))
 
     def mark_harvested(self, mint: str, metrics: dict[str, Any]) -> None:
         raw = self.r.hget(self.K_MIG, mint)

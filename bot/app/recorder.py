@@ -78,6 +78,18 @@ class Recorder:
         self.last_portal_ts = 0.0
         self.feed: SolanaLogsFeed | None = None
         self.portal_feed: PumpPortalFeed | None = None
+        self.gecko: GeckoTerminal | None = None
+        self.harvest_stats: dict[str, Any] = {
+            "runs": 0,
+            "last_run_ts": 0.0,
+            "last_error": None,
+            "rows_last_run": 0,
+            "with_data": 0,
+            "no_pool": 0,
+            "no_candles": 0,
+            "due": 0,  # rows older than harvest_after_s still waiting
+            "pending": 0,  # rows not harvested yet at all
+        }
         self.rpc: SolanaRpc | None = None
         self.learned_authority: str | None = None
         self.learned_signer: str | None = None
@@ -145,14 +157,23 @@ class Recorder:
 
     def prime_claims(self) -> int:
         """On startup, treat every registry row that already has a pool as handled, so a cold-start
-        backfill does not re-fetch what earlier runs confirmed. Rows without a pool stay open."""
+        backfill does not re-fetch what earlier runs confirmed. Rows without a pool stay open,
+        except PumpPortal rows whose signature the chain already attributed to another mint:
+        those are phantoms and are dropped."""
+        rows = self.store.migrations(limit=50_000)
         n = 0
-        for row in self.store.migrations(limit=50_000):
+        for row in rows:
             sig = row.get("signature")
             if sig and row.get("pool"):
                 self._claimed[sig] = None
                 self._sig_mint[sig] = row["mint"]
                 n += 1
+        for row in rows:
+            sig = row.get("signature")
+            chain_mint = self._sig_mint.get(sig) if sig else None
+            phantom = not row.get("pool") and chain_mint and chain_mint != row["mint"]
+            if phantom and self.store.drop_migration(row["mint"]):
+                self.rpc_stats["portal_mislabeled"] += 1
         return n
 
     def _spawn(self, coro) -> None:
@@ -415,8 +436,16 @@ class Recorder:
         now = now or time.time()
         address = self.learned_authority or self.cfg.migration_authority
         cursor = self._poll_cursor
-        floor = now - self.cfg.backfill_s
         st = self.rpc_stats["poller"]
+        window = self.cfg.backfill_s
+        initial = (
+            cursor is None
+            and self.cfg.initial_backfill_s > 0
+            and not self.store.get_kv("initial_backfill_done")
+        )
+        if initial:
+            window = max(window, self.cfg.initial_backfill_s)
+        floor = now - window
         sigs: list[dict[str, Any]] = []
         before = None
         while True:
@@ -427,6 +456,9 @@ class Recorder:
             before = page[-1]["signature"]
         if cursor is None:
             st["backfill_from"] = floor
+            st["initial_backfill"] = initial
+            if initial:
+                self.store.set_kv("initial_backfill_done", str(int(now)))
         sigs = [s for s in sigs if (s.get("blockTime") or now) >= floor]
         st["polls"] += 1
         st["listed"] += len(sigs)
@@ -472,6 +504,7 @@ class Recorder:
     # ---- harvester ----
     async def harvest_once(self, gecko: GeckoTerminal, now: float | None = None) -> int:
         now = now or time.time()
+        hs = self.harvest_stats
         rows = self.store.pending_harvest(now - self.cfg.harvest_after_s, self.cfg.harvest_batch)
         done = 0
         for row in rows:
@@ -481,11 +514,19 @@ class Recorder:
                 candles = await gecko.candles_between(pool, t0 - 60, t0 + 24 * 3600 + 60) if pool else []
                 info = await gecko.pool_info(pool) if pool else None
             except httpx.HTTPError as exc:
-                print(f"[harvest] {row['mint'][:6]} http error {exc}; retry next cycle")
+                hs["last_error"] = f"{row['mint'][:6]}: {type(exc).__name__}"
+                print(f"[harvest] {row['mint'][:6]} http error {type(exc).__name__}; retry next cycle")
                 continue
             metrics = compute_metrics(
-                candles, t0, self.cfg.entry_delays_min, self.cfg.horizons_min, self.cfg.cost_bps_round_trip
+                candles,
+                t0,
+                self.cfg.entry_delays_min,
+                self.cfg.horizons_min,
+                self.cfg.cost_bps_round_trip,
+                now=now,
             )
+            if not pool:
+                metrics["reason"] = "no_pool"  # neither the chain nor Gecko knows a pool for this mint
             metrics.update(
                 {
                     "mint": row["mint"],
@@ -494,6 +535,7 @@ class Recorder:
                     "slot": row.get("slot"),
                     "source": row.get("source"),
                     "migration_sol": row.get("sol_amount"),
+                    "quote_mint": row.get("quote_mint"),
                     "harvested_at": now,
                     "reserve_usd_now": float((info or {}).get("reserve_in_usd") or 0) if info else None,
                 }
@@ -501,17 +543,24 @@ class Recorder:
             self.store.mark_harvested(row["mint"], metrics)
             self.survivor.write(metrics)
             self.counts["harvested"] += 1
+            key = metrics.get("reason") if metrics.get("no_data") else "with_data"
+            hs[key] = hs.get(key, 0) + 1
             done += 1
+        hs["runs"] += 1
+        hs["last_run_ts"] = now
+        hs["rows_last_run"] = done
+        hs["due"], hs["pending"] = self.store.pending_counts(now - self.cfg.harvest_after_s)
         return done
 
     async def run_harvester(self, client: httpx.AsyncClient) -> None:
-        gecko = GeckoTerminal(client, self.cfg.gecko_base_url, self.cfg.gecko_rpm)
+        self.gecko = GeckoTerminal(client, self.cfg.gecko_base_url, self.cfg.gecko_rpm)
         while True:
             try:
-                n = await self.harvest_once(gecko)
+                n = await self.harvest_once(self.gecko)
                 if n:
                     print(f"[harvest] {n} tokens")
             except Exception as exc:  # noqa: BLE001 - never let the harvester die
+                self.harvest_stats["last_error"] = f"{type(exc).__name__}: {exc}"[:200]
                 print(f"[harvest] error: {exc}")
             await asyncio.sleep(self.cfg.harvest_interval_s)
 
@@ -529,6 +578,8 @@ class Recorder:
                 portal_feed=self.portal_feed.stats if self.portal_feed else None,
                 portal_pools=self.portal_pools,
                 rpc={**self.rpc_stats, "transport": self.rpc.stats if self.rpc else None},
+                harvest=self.harvest_stats,
+                gecko=self.gecko.stats if self.gecko else None,
                 mentions=self.mentions(),
             )
             await asyncio.sleep(5)

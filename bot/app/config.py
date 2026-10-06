@@ -42,7 +42,11 @@ class Settings(BaseSettings):
     # ~100 tx/h on the authority, a third of them failed migrate races that cost nothing.
     rpc_poll: bool = True
     poll_s: float = 30
-    backfill_s: float = 6 * 3600  # how far back a cold start (or a lost cursor) walks
+    backfill_s: float = 6 * 3600  # how far back every process start walks
+    # The very first start of a deployment walks further, once, so the harvester has days of
+    # graduations to work on immediately instead of waiting 25h for the first row. ~1 credit per
+    # successful tx (about 3.2k for 48h). Set to 0 to disable.
+    initial_backfill_s: float = 48 * 3600
     rpc_concurrency: int = 4  # parallel getTransaction calls
     rpc_rps: float = 5  # global request pace; Helius free tier allows ~10/s and 429s above it
     rpc_429_penalty_s: float = 2  # every caller backs off this long after a 429
@@ -61,8 +65,9 @@ class Settings(BaseSettings):
     gecko_base_url: str = "https://api.geckoterminal.com/api/v2"
     gecko_rpm: int = 25
     harvest_after_s: float = 25 * 3600  # wait until the 24h window is fully observable
-    harvest_interval_s: float = 300
-    harvest_batch: int = 20
+    # ~3 Gecko calls per row at gecko_rpm -> about 8 rows/min; the batch just bounds one cycle.
+    harvest_interval_s: float = 240
+    harvest_batch: int = 40
 
     # --- survivor-entry hypothesis (C) ---
     entry_delays_min: list[int] = [0, 5, 15, 30, 60]
