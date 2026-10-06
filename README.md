@@ -123,5 +123,6 @@ Nghị định 284/2026/NĐ‑CP (16/7/2026, hiệu lực 1/9/2026): cá nhân g
 * Một số curve quote bằng stablecoin (`sol_amount` ≈ 0.02): lọc theo `quote_mint` khi phân tích.
 * Bot thua cuộc đua migrate vẫn có tx *thành công*: log "Bonding curve already migrated", không CPI, không event. Chỉ tx có CPI sang PumpSwap mới là migration (đếm riêng ở `rpc.noop`).
 * Mainnet đã có **transaction version 1**; `getTransaction` với `maxSupportedTransactionVersion: 0` trả null cho chúng (≈20% tx của authority), trông như "not found" trên mọi RPC. Recorder gửi `PH_RPC_MAX_TX_VERSION` (255). Cấu trúc JSON v1 giống v0 (thêm `transactionConfig`, `stackHeight`).
+* GeckoTerminal từ IP egress của Bunny chỉ chấp nhận ~5–6 call/phút (IP dùng chung), kém xa 30/phút trong tài liệu. Harvester dùng nến 5 phút (cả cửa sổ 24h trong một call; mọi mốc vào/giữ đều là bội của 5 phút), gộp thông tin pool 30 cái một call, và bộ điều tốc tự thích ứng (giảm 30% mỗi 429, tăng 10% sau 20 call sạch, sàn 3/phút, trần `PH_GECKO_RPM`).
 * Helius free trả 429 khi bắn hơn ~10 req/s: client điều tốc toàn cục `PH_RPC_RPS` (5/s), bị 429 thì mọi caller lùi `PH_RPC_429_PENALTY_S`; fetch hỏng được xếp hàng thử lại ở các vòng poll sau (`PH_RETRY_MAX_ATTEMPTS`), và mỗi lần khởi động poller quét lại cả cửa sổ `PH_BACKFILL_S` (dòng đã có pool không fetch lại).
 

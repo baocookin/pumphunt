@@ -188,11 +188,11 @@ def test_gecko_raises_after_persistent_rate_limits_and_counts_calls(monkeypatch)
     g = GeckoTerminal(Client([429, 429, 429, 429]), "https://g", rpm=100_000)
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(g.pool_info("P"))
-    assert g.stats == {"calls": 4, "rate_limited": 4, "not_found": 0, "errors": 1}
+    assert _counts(g) == {"calls": 4, "rate_limited": 4, "not_found": 0, "errors": 1}
     g = GeckoTerminal(Client([429, 200, 404]), "https://g", rpm=100_000)
     assert asyncio.run(g.pool_info("P")) == {"reserve_in_usd": "1"}
     assert asyncio.run(g.pool_info("Q")) is None
-    assert g.stats == {"calls": 3, "rate_limited": 1, "not_found": 1, "errors": 0}
+    assert _counts(g) == {"calls": 3, "rate_limited": 1, "not_found": 1, "errors": 0}
     assert 7.0 in slept  # Retry-After honoured (the other sleeps are the per-minute pacer)
     # multi: 30 pools per call, keyed by address
     c = Client([200, 200])
@@ -209,6 +209,55 @@ def test_gecko_raises_after_persistent_rate_limits_and_counts_calls(monkeypatch)
 
 async def _no_sleep(_s):
     return None
+
+
+def _counts(g):
+    return {k: v for k, v in g.stats.items() if k != "rpm_now"}
+
+
+def test_gecko_limiter_adapts_and_candles_default_to_five_minutes(monkeypatch):
+    from app.gecko import GeckoTerminal, RateLimiter
+
+    rl = RateLimiter(20, min_per_minute=3)
+    rl.rejected()
+    assert rl.rpm == 14.0
+    for _ in range(10):
+        rl.rejected()
+    assert rl.rpm == 3.0  # floor
+    for _ in range(20):
+        rl.accepted()
+    assert abs(rl.rpm - 3.3) < 1e-9  # +10% per 20 clean calls
+    for _ in range(2000):
+        rl.accepted()
+    assert rl.rpm == 20.0  # ceiling
+
+    class Client:
+        def __init__(self):
+            self.params = []
+
+        async def get(self, url, params=None, headers=None):
+            self.params.append(params)
+
+            class R:
+                status_code = 200
+                headers = {}
+
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"data": {"attributes": {"ohlcv_list": [[600, 1, 1, 1, 1, 5]]}}}
+
+            return R()
+
+    c = Client()
+    g = GeckoTerminal(c, "https://g", rpm=100_000)
+    assert asyncio.run(g.candles_between("P", 0, 1000))[0].ts == 600
+    assert c.params[0]["aggregate"] == 5 and c.params[0]["before_timestamp"] == 1000 + 300
+    assert g.stats["rpm_now"] == 100000.0
+    g1 = GeckoTerminal(c, "https://g", rpm=100_000, candle_minutes=1)
+    asyncio.run(g1.ohlcv_minute("P", 50))
+    assert c.params[-1]["aggregate"] == 1
 
 
 def test_api_routes_under_prefix(monkeypatch, tmp_path):
