@@ -525,6 +525,20 @@ def test_mislabeled_portal_rows_are_dropped_or_refused(rec):
     assert rec.store.drop_migration(PK_A) is False
 
 
+def test_supervisor_restarts_a_crashed_loop_and_records_it(rec):
+    calls = {"n": 0}
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return "done"  # second run finishes cleanly
+
+    asyncio.run(rec._supervise("flaky", flaky, restart_s=0))
+    assert calls["n"] == 2
+    assert rec.task_errors["flaky"]["count"] == 1 and rec.task_errors["flaky"]["last"] == "RuntimeError: boom"
+
+
 def test_rpc_confirmation_records_why_a_tx_is_not_a_migration(rec):
     tx = fake_migrate_tx(PK_A, PK_B, WA)
     tx["meta"]["logMessages"] = ["Program log: nothing here"]

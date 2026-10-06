@@ -57,9 +57,11 @@ class PumpPortalFeed:
                         ev = parse_event(json.loads(raw), ts)
                         if ev:
                             yield ev
-            except (TimeoutError, websockets.ConnectionClosed, OSError) as exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a rejected handshake (HTTP 429) must not end the loop
                 self.stats["last_error"] = f"{type(exc).__name__}: {exc}"
-                print(f"[portal] disconnected: {exc}; reconnecting in {backoff:.0f}s")
+                print(f"[portal] disconnected: {type(exc).__name__}: {exc}; reconnecting in {backoff:.0f}s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
             finally:
