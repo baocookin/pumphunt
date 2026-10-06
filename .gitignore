@@ -9,3 +9,4 @@ node_modules/
 next-env.d.ts
 *.tsbuildinfo
 web/package-lock.json
+web/out/

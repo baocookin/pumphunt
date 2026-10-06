@@ -19,6 +19,18 @@ def day_key(ts: float) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(ts))
 
 
+def _merge_pool(existing: dict[str, Any], row: dict[str, Any]) -> dict[str, Any] | None:
+    """A PumpPortal sighting arrives without the pool; the chain event fills it in later."""
+    if existing.get("pool") or not row.get("pool"):
+        return None
+    merged = dict(existing)
+    for k in ("pool", "slot", "signature", "chain_ts", "sol_amount", "mint_amount", "bonding_curve", "user"):
+        if row.get(k) is not None:
+            merged[k] = row[k]
+    merged["source"] = row.get("source", merged.get("source"))
+    return merged
+
+
 class Store(Protocol):
     def incr(self, name: str, hour: str, n: int = 1) -> None: ...
     def counters(self, name: str, hours: list[str]) -> dict[str, int]: ...
@@ -48,10 +60,15 @@ class MemoryStore:
         return {h: c.get(h, 0) for h in hours}
 
     def add_migration(self, row: dict[str, Any]) -> bool:
-        if row["mint"] in self._migrations:
-            return False
-        self._migrations[row["mint"]] = dict(row, harvested=False)
-        return True
+        """True if the mint is new. An existing row without a pool gets the pool filled in."""
+        existing = self._migrations.get(row["mint"])
+        if existing is None:
+            self._migrations[row["mint"]] = dict(row, harvested=False)
+            return True
+        merged = _merge_pool(existing, row)
+        if merged is not None:
+            self._migrations[row["mint"]] = merged
+        return False
 
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = sorted(self._migrations.values(), key=lambda r: r["ts"], reverse=True)
@@ -67,6 +84,8 @@ class MemoryStore:
     def mark_harvested(self, mint: str, metrics: dict[str, Any]) -> None:
         if mint in self._migrations:
             self._migrations[mint]["harvested"] = True
+            if metrics.get("pool"):
+                self._migrations[mint]["pool"] = metrics["pool"]
         self._survivor.append(metrics)
         del self._survivor[:-MAX_SURVIVOR_ROWS]
 
@@ -102,11 +121,15 @@ class RedisStore:
         return {h: int(v or 0) for h, v in zip(hours, vals, strict=True)}
 
     def add_migration(self, row: dict[str, Any]) -> bool:
-        row = dict(row, harvested=False)
-        added = self.r.hsetnx(self.K_MIG, row["mint"], json.dumps(row))
-        if added:
+        new = dict(row, harvested=False)
+        if self.r.hsetnx(self.K_MIG, row["mint"], json.dumps(new)):
             self.r.zadd(self.K_PENDING, {row["mint"]: row["ts"]})
-        return bool(added)
+            return True
+        raw = self.r.hget(self.K_MIG, row["mint"])
+        merged = _merge_pool(json.loads(raw), row) if raw else None
+        if merged is not None:
+            self.r.hset(self.K_MIG, row["mint"], json.dumps(merged))
+        return False
 
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = [json.loads(v) for v in self.r.hvals(self.K_MIG)]
@@ -126,7 +149,10 @@ class RedisStore:
         raw = self.r.hget(self.K_MIG, mint)
         p = self.r.pipeline()
         if raw:
-            p.hset(self.K_MIG, mint, json.dumps(dict(json.loads(raw), harvested=True)))
+            row = dict(json.loads(raw), harvested=True)
+            if metrics.get("pool"):
+                row["pool"] = metrics["pool"]
+            p.hset(self.K_MIG, mint, json.dumps(row))
         p.zrem(self.K_PENDING, mint)
         p.rpush(self.K_SURV, json.dumps(metrics))
         p.ltrim(self.K_SURV, -MAX_SURVIVOR_ROWS, -1)

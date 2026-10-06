@@ -1,5 +1,7 @@
 """Runtime configuration (env vars / .env, prefix PH_)."""
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +11,8 @@ class Settings(BaseSettings):
     # --- infra ---
     redis_url: str | None = "redis://localhost:6379"
     data_dir: str = "data"
+    # Static export of the Next.js dashboard, served at "/" when the directory exists.
+    static_dir: str | None = None
     run_recorder: bool = True
     run_harvester: bool = True
 
@@ -16,8 +20,16 @@ class Settings(BaseSettings):
     # a free Helius key (wss://mainnet.helius-rpc.com/?api-key=...) is the sane default.
     solana_ws_url: str = "wss://api.mainnet-beta.solana.com"
     chain_commitment: str = "confirmed"
+    # "migrations": subscribe only to transactions mentioning pump.fun's migration
+    #   authority (~1k tx/day, a few MB/day — fits any free RPC tier).
+    # "full": also subscribe to the whole pump.fun program (every create/trade,
+    #   5-15 GB/day of stream — needs a paid RPC plan and a big volume).
+    chain_scope: Literal["migrations", "full"] = "migrations"
+    migration_authority: str = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
+    # In "full" scope, trades are logged as compact rows unless this is on.
+    record_raw_trades: bool = False
 
-    # Secondary feed (coverage check only). Free channels, no API key needed.
+    # Secondary feed (coverage check + migration fallback). Free channels, no API key needed.
     pumpportal_enabled: bool = True
     pumpportal_ws_url: str = "wss://pumpportal.fun/api/data"
     pumpportal_api_key: str | None = None

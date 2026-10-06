@@ -1,0 +1,9 @@
+.git
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+bot/data
+web/node_modules
+web/.next
+web/out
+.env

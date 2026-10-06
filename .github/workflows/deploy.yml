@@ -1,45 +1,41 @@
-# Build both images, push to GHCR, then point the Magic Containers app at the new tags.
-# Mirrors jamie-at-bunny/mc-template-fastapi-with-redis. Required:
-#   secrets.BUNNYNET_API_KEY, vars.APP_ID, vars.DASHBOARD_API_URL (public URL of the bot container)
-name: Deploy to Magic Containers
+# Build the single image, push to GHCR, then point the Magic Containers app at the new tag.
+# Mirrors jamie-at-bunny/mc-template-fastapi-with-redis. Repository settings needed:
+#   Variable APP_ID            — Magic Containers app id
+#   Secret   BUNNYNET_API_KEY  — bunny.net API key
+# and the GHCR package must be public (or registry credentials configured in Bunny).
+name: Build and Deploy to Magic Containers
 
 on:
   push:
     branches: [main]
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
-  build-deploy:
+  build:
+    name: Build and deploy
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - name: Docker login
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
-          context: bot
+          context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/pumphunt-bot:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/pumphunt-bot:latest
-      - uses: docker/build-push-action@v6
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+      - name: Deploy to Magic Containers
+        uses: BunnyWay/actions/container-update-image@main
         with:
-          context: web
-          push: true
-          build-args: NEXT_PUBLIC_API_URL=${{ vars.DASHBOARD_API_URL }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/pumphunt-web:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/pumphunt-web:latest
-      - name: Update Magic Containers image tags
-        run: |
-          for c in bot web; do
-            curl -sS -f -X PATCH "https://api.bunny.net/compute/apps/${{ vars.APP_ID }}/containers/$c" \
-              -H "AccessKey: ${{ secrets.BUNNYNET_API_KEY }}" -H "Content-Type: application/json" \
-              -d '{"imageTag":"${{ github.sha }}"}'
-          done
+          app_id: ${{ vars.APP_ID }}
+          api_key: ${{ secrets.BUNNYNET_API_KEY }}
+          container: app
+          image_tag: ${{ github.sha }}

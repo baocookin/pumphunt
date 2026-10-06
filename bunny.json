@@ -1,30 +1,22 @@
 {
   "id": "pumphunt",
   "name": "pumphunt",
-  "description": "pump.fun on-chain recorder + post-graduation research harness (FastAPI + Redis) with a Next.js dashboard, on Magic Containers.",
+  "description": "pump.fun on-chain recorder + survivor-entry research harness (FastAPI serving the Next.js dashboard) with Redis, on Magic Containers.",
   "icon": "code",
   "containers": [
     {
-      "name": "bot",
+      "name": "app",
       "imageNamespace": "ghcr.io",
-      "imageName": "REPLACE_OWNER/pumphunt-bot",
+      "imageName": "REPLACE_OWNER/pumphunt",
       "imageTag": "latest",
       "environmentVariables": [
         { "key": "PH_REDIS_URL", "value": "redis://localhost:6379" },
         { "key": "PH_DATA_DIR", "value": "/data" },
-        { "key": "PH_SOLANA_WS_URL", "value": "wss://api.mainnet-beta.solana.com" }
+        { "key": "PH_CHAIN_SCOPE", "value": "migrations" },
+        { "key": "PH_SOLANA_WS_URL", "value": "wss://mainnet.helius-rpc.com/?api-key=REPLACE_ME" }
       ],
-      "volumes": [{ "mountPath": "/data", "sizeMB": 4096 }],
-      "endpoints": [{ "displayName": "API", "type": "CDN", "containerPort": 8080 }]
-    },
-    {
-      "name": "web",
-      "imageNamespace": "ghcr.io",
-      "imageName": "REPLACE_OWNER/pumphunt-web",
-      "imageTag": "latest",
-      "environmentVariables": [],
-      "volumes": [],
-      "endpoints": [{ "displayName": "Dashboard", "type": "CDN", "containerPort": 3000 }]
+      "volumes": [{ "mountPath": "/data", "sizeMB": 10240 }],
+      "endpoints": [{ "displayName": "Dashboard + API", "type": "CDN", "containerPort": 8080 }]
     },
     {
       "name": "redis",

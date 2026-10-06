@@ -2,18 +2,22 @@
 
 import { useEffect, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// Same origin by default (FastAPI serves this export); override for `next dev`.
+const API = `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api`;
 
 type Stats = {
   status: { now?: number; last_chain_ts?: number; last_portal_ts?: number; counts?: Record<string, number> };
+  chain_scope: "migrations" | "full";
+  creates_24h: number;
   creates_24h_chain: number;
   creates_24h_portal: number;
   portal_coverage: number | null;
   migrations_24h: number;
+  migrations_24h_portal: number;
   migrations_total: number;
-  hourly: { hour: string; creates_chain: number; creates_portal: number; migrations: number }[];
+  hourly: { hour: string; creates_chain: number; creates_portal: number; migrations: number; migrations_portal: number }[];
 };
-type Migration = { mint: string; pool: string; ts: number; slot: number; sol_amount: number; harvested: boolean };
+type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; harvested: boolean; source?: string };
 type Cell = { n: number; median?: number; win_rate?: number; top2pct_share?: number; p10?: number; p90?: number };
 type Summary = {
   harvested: number; with_data: number; alive_24h_rate: number;
@@ -21,7 +25,7 @@ type Summary = {
 };
 type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number };
 
-const pct = (v?: number, d = 1) => (v === undefined || v === null || !Number.isFinite(v) ? "–" : `${(v * 100).toFixed(d)}%`);
+const pct = (v?: number | null, d = 1) => (v === undefined || v === null || !Number.isFinite(v) ? "–" : `${(v * 100).toFixed(d)}%`);
 const signed = (v?: number) => (v === undefined || !Number.isFinite(v) ? "–" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
 const time = (ts: number) => new Date(ts * 1000).toLocaleString();
 const short = (m: string) => `${m.slice(0, 4)}…${m.slice(-4)}`;
@@ -56,23 +60,24 @@ export default function Page() {
   }, []);
 
   const now = Date.now() / 1000;
-  const chainOk = (stats?.status.last_chain_ts ?? 0) > now - 60;
+  const chainOk = (stats?.status.last_chain_ts ?? 0) > now - 15 * 60; // migrations are ~1/min, be patient
   const portalOk = (stats?.status.last_portal_ts ?? 0) > now - 120;
   const verdict = sum?.verdict.status ?? "…";
+  const full = stats?.chain_scope === "full";
 
   return (
     <main>
       <h1>
-        pumphunt <span className="badge">recorder</span>
+        pumphunt <span className="badge">recorder · {stats?.chain_scope ?? "…"}</span>
         <span className={`badge ${chainOk ? "ok" : "bad"}`}>chain feed {chainOk ? "ok" : "no data"}</span>
         <span className={`badge ${portalOk ? "ok" : "bad"}`}>pumpportal {portalOk ? "ok" : "no data"}</span>
       </h1>
       {err && <p className="err">{err}</p>}
 
       <div className="tiles">
-        <div className="tile"><div className="k">Token tạo mới / 24h (on‑chain)</div><div className="v">{stats?.creates_24h_chain ?? "–"}</div></div>
-        <div className="tile"><div className="k">PumpPortal coverage</div><div className="v">{pct(stats?.portal_coverage ?? undefined, 0)}</div></div>
-        <div className="tile"><div className="k">Graduation / 24h</div><div className="v">{stats?.migrations_24h ?? "–"} <span className="k">/ {stats?.migrations_total ?? 0} tổng</span></div></div>
+        <div className="tile"><div className="k">Token tạo mới / 24h {full ? "(on‑chain)" : "(PumpPortal)"}</div><div className="v">{stats?.creates_24h ?? "–"}</div></div>
+        <div className="tile"><div className="k">Graduation / 24h (on‑chain)</div><div className="v">{stats?.migrations_24h ?? "–"} <span className="k">/ {stats?.migrations_total ?? 0} tổng</span></div></div>
+        <div className="tile"><div className="k">Graduation / 24h (PumpPortal)</div><div className="v">{stats?.migrations_24h_portal ?? "–"}</div></div>
         <div className="tile"><div className="k">Đã harvest nến</div><div className="v">{sum?.harvested ?? 0} <span className="k">alive 24h {pct(sum?.alive_24h_rate, 0)}</span></div></div>
         <div className={`tile verdict ${verdict.toLowerCase()}`}><div className="k">Giả thuyết C (T+30m → 1h)</div><div className="v">{verdict}</div><div className="k">{sum?.verdict.why}</div></div>
       </div>
@@ -103,16 +108,17 @@ export default function Page() {
 
       <h2>Graduation gần đây</h2>
       <table>
-        <thead><tr><th>Lúc</th><th>Mint</th><th>Pool</th><th>Slot</th><th>SOL vào pool</th><th>Harvest</th></tr></thead>
+        <thead><tr><th>Lúc</th><th>Mint</th><th>Pool</th><th>Slot</th><th>SOL vào pool</th><th>Nguồn</th><th>Harvest</th></tr></thead>
         <tbody>
-          {migs.length === 0 && <tr><td colSpan={6} className="empty">Chưa ghi được migration nào</td></tr>}
+          {migs.length === 0 && <tr><td colSpan={7} className="empty">Chưa ghi được migration nào</td></tr>}
           {migs.map((m) => (
             <tr key={m.mint}>
               <td>{time(m.ts)}</td>
               <td className="mono"><a href={`https://solscan.io/token/${m.mint}`} target="_blank" rel="noreferrer">{short(m.mint)}</a></td>
-              <td className="mono">{short(m.pool)}</td>
-              <td>{m.slot}</td>
-              <td>{m.sol_amount?.toFixed(2)}</td>
+              <td className="mono">{m.pool ? short(m.pool) : <span className="k">chưa rõ</span>}</td>
+              <td>{m.slot ?? "–"}</td>
+              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? m.sol_amount.toFixed(2) : "–"}</td>
+              <td>{m.source ?? "–"}</td>
               <td>{m.harvested ? "✓" : "chờ 25h"}</td>
             </tr>
           ))}
@@ -121,10 +127,10 @@ export default function Page() {
 
       <h2>Theo giờ (24h)</h2>
       <table>
-        <thead><tr><th>Giờ (UTC)</th><th>Create on‑chain</th><th>Create PumpPortal</th><th>Graduation</th></tr></thead>
+        <thead><tr><th>Giờ (UTC)</th><th>Create on‑chain</th><th>Create PumpPortal</th><th>Graduation on‑chain</th><th>Graduation PumpPortal</th></tr></thead>
         <tbody>
           {stats?.hourly.slice().reverse().map((h) => (
-            <tr key={h.hour}><td>{h.hour}</td><td>{h.creates_chain}</td><td>{h.creates_portal}</td><td>{h.migrations}</td></tr>
+            <tr key={h.hour}><td>{h.hour}</td><td>{full ? h.creates_chain : "–"}</td><td>{h.creates_portal}</td><td>{h.migrations}</td><td>{h.migrations_portal}</td></tr>
           ))}
         </tbody>
       </table>

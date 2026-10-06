@@ -1,8 +1,8 @@
 """GeckoTerminal public API client (free, ~30 req/min, no key).
 
-We only need two things per graduated token: the PumpSwap pool's 1-minute
-OHLCV for the first 24h after migration, and the pool's current info. The pool
-address comes straight from the on-chain migration event, so no lookup.
+We only need three things per graduated token: the PumpSwap pool address (known
+from the on-chain migration event, or looked up by mint as a fallback), the
+pool's 1-minute OHLCV for the first 24h after migration, and its current info.
 """
 
 import asyncio
@@ -35,6 +35,28 @@ class RateLimiter:
         self._next = max(now, self._next) + self.interval
 
 
+def pick_pool(pools: list[dict[str, Any]]) -> str | None:
+    """Prefer a PumpSwap pool, else the deepest one. Returns the pool address."""
+
+    def reserve(p: dict[str, Any]) -> float:
+        try:
+            return float((p.get("attributes") or {}).get("reserve_in_usd") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def dex(p: dict[str, Any]) -> str:
+        return str(
+            (((p.get("relationships") or {}).get("dex") or {}).get("data") or {}).get("id", "")
+        ).lower()
+
+    pump = [p for p in pools if "pump" in dex(p)]
+    cands = pump or pools
+    if not cands:
+        return None
+    best = max(cands, key=reserve)
+    return (best.get("attributes") or {}).get("address")
+
+
 class GeckoTerminal:
     def __init__(self, client: httpx.AsyncClient, base_url: str, rpm: int = 25):
         self.c = client
@@ -59,6 +81,13 @@ class GeckoTerminal:
     async def pool_info(self, pool: str, network: str = "solana") -> dict[str, Any] | None:
         data = await self._get(f"/networks/{network}/pools/{pool}")
         return (data or {}).get("data", {}).get("attributes") if data else None
+
+    async def token_pools(self, mint: str, network: str = "solana") -> list[dict[str, Any]]:
+        data = await self._get(f"/networks/{network}/tokens/{mint}/pools")
+        return list((data or {}).get("data") or [])
+
+    async def resolve_pool(self, mint: str) -> str | None:
+        return pick_pool(await self.token_pools(mint))
 
     async def ohlcv_minute(
         self, pool: str, before_ts: int, limit: int = 1000, network: str = "solana"

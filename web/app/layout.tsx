@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "pumphunt",
-  description: "pump.fun paper-trading bot dashboard",
+  description: "pump.fun on-chain recorder and survivor-entry research dashboard",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

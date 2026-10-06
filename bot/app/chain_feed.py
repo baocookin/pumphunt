@@ -1,9 +1,13 @@
-"""Primary data source: Solana RPC `logsSubscribe` on the pump.fun program.
+"""Primary data source: Solana RPC `logsSubscribe`.
 
 Why not PumpPortal as primary: its stream has no slot number and is known to
-drop events (see docs/RESEARCH.md). The RPC log stream is free on any provider
-(Helius free tier is fine), carries the slot, and decodes to the same events.
-PumpPortal stays as a *secondary* feed to measure coverage.
+drop events (see docs/RESEARCH.md). The RPC log stream is free on any provider,
+carries the slot, and decodes to the same events.
+
+`logsSubscribe` accepts exactly one `mentions` address per subscription, so we
+open one subscription per address on a single connection. Subscribing to the
+migration authority alone costs a few MB/day; the whole pump.fun program is a
+firehose (see Settings.chain_scope).
 """
 
 import asyncio
@@ -13,22 +17,29 @@ from collections.abc import AsyncIterator
 
 import websockets
 
-from .anchor import PUMP_PROGRAM, ChainEvent, parse_logs_notification
-from .jsonl import JsonlWriter
+from .anchor import ChainEvent, parse_logs_notification
 
 
 class SolanaLogsFeed:
-    def __init__(
-        self,
-        ws_url: str,
-        commitment: str = "confirmed",
-        program: str = PUMP_PROGRAM,
-        record: JsonlWriter | None = None,
-    ):
+    def __init__(self, ws_url: str, mentions: list[str], commitment: str = "confirmed"):
+        if not mentions:
+            raise ValueError("at least one address to watch is required")
         self.ws_url = ws_url
+        self.mentions = mentions
         self.commitment = commitment
-        self.program = program
-        self.record = record
+
+    def subscribe_messages(self) -> list[str]:
+        return [
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": i + 1,
+                    "method": "logsSubscribe",
+                    "params": [{"mentions": [addr]}, {"commitment": self.commitment}],
+                }
+            )
+            for i, addr in enumerate(self.mentions)
+        ]
 
     async def events(self) -> AsyncIterator[ChainEvent]:
         backoff = 1.0
@@ -38,22 +49,11 @@ class SolanaLogsFeed:
                     self.ws_url, ping_interval=20, max_queue=8192, max_size=8 * 1024 * 1024
                 ) as ws:
                     backoff = 1.0
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "jsonrpc": "2.0",
-                                "id": 1,
-                                "method": "logsSubscribe",
-                                "params": [{"mentions": [self.program]}, {"commitment": self.commitment}],
-                            }
-                        )
-                    )
+                    for msg in self.subscribe_messages():
+                        await ws.send(msg)
                     async for raw in ws:
                         ts = time.time()
-                        msg = json.loads(raw)
-                        if self.record and msg.get("method") == "logsNotification":
-                            self.record.write({"ts": ts, "src": "chain", "msg": msg["params"]["result"]})
-                        for ev in parse_logs_notification(msg, ts):
+                        for ev in parse_logs_notification(json.loads(raw), ts):
                             yield ev
             except (TimeoutError, websockets.ConnectionClosed, OSError) as exc:
                 print(f"[chain] disconnected: {exc}; reconnecting in {backoff:.0f}s")
