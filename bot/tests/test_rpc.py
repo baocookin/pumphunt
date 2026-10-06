@@ -192,7 +192,8 @@ def test_rpc_client_paces_requests_and_backs_off_on_429():
 
     class Client:
         def __init__(self):
-            self.codes = [200, 200, 429, 429, 429, 429, 200]  # the third call is rate limited 4x: give up
+            # the third call is rate limited 4x: give up; the fourth meets a brief outage and gets through
+            self.codes = [200, 200, 429, 429, 429, 429, 503, 200]
 
         async def post(self, url, json):
             return Resp(self.codes.pop(0))
@@ -211,9 +212,10 @@ def test_rpc_client_paces_requests_and_backs_off_on_429():
     spaced, after_429, stats = asyncio.run(run())
     assert spaced >= 0.045  # second request waited for its slot at 20 rps
     assert after_429 >= 0.25  # the 429 penalty held the next request back
-    assert {k: stats[k] for k in ("calls", "rate_limited", "errors")} == {
-        "calls": 7,
+    assert {k: stats[k] for k in ("calls", "rate_limited", "unavailable", "errors")} == {
+        "calls": 8,
         "rate_limited": 4,
+        "unavailable": 1,
         "errors": 1,
     }
     assert stats["credits_est"] == 3  # only answered calls are metered  # 3 retries inside _call, then raised

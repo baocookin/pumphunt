@@ -148,7 +148,13 @@ class SolanaRpc:
         self.penalty_s = penalty_s
         self._next = 0.0
         self._lock = asyncio.Lock()
-        self.stats: dict[str, Any] = {"calls": 0, "rate_limited": 0, "errors": 0, "credits_est": 0}
+        self.stats: dict[str, Any] = {
+            "calls": 0,
+            "rate_limited": 0,
+            "unavailable": 0,
+            "errors": 0,
+            "credits_est": 0,
+        }
 
     async def _pace(self) -> None:
         async with self._lock:
@@ -161,7 +167,8 @@ class SolanaRpc:
     async def _call(self, method: str, params: list[Any], retries: int = 3, credits: int = 1) -> Any:
         """One JSON-RPC call. A 429 (HTTP status, or a JSON error with code 429 as some providers
         send it) pushes every caller back by `penalty_s` and is retried here, so callers only see
-        rate limiting that persists. Any other JSON-RPC error raises RpcError."""
+        rate limiting that persists; a 502/503/504 (the provider briefly down) is retried the same
+        way. Any other JSON-RPC error raises RpcError."""
         for attempt in range(retries + 1):
             await self._pace()
             self.stats["calls"] += 1
@@ -171,8 +178,9 @@ class SolanaRpc:
             body = r.json() if r.status_code == 200 else None
             err = (body or {}).get("error") if isinstance(body, dict) else None
             limited = r.status_code == 429 or (isinstance(err, dict) and err.get("code") == 429)
-            if limited:
-                self.stats["rate_limited"] += 1
+            unavailable = r.status_code in (502, 503, 504)
+            if limited or unavailable:
+                self.stats["rate_limited" if limited else "unavailable"] += 1
                 self._next = max(self._next, time.monotonic() + self.penalty_s * (attempt + 1))
                 if attempt < retries:
                     continue
