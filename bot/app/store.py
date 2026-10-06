@@ -67,6 +67,8 @@ class Store(Protocol):
     def status(self) -> dict[str, Any]: ...
     def get_kv(self, key: str) -> str | None: ...
     def set_kv(self, key: str, value: str) -> None: ...
+    def incr_kv(self, key: str, n: int) -> int: ...
+    def requeue(self, mints: list[str]) -> int: ...
 
 
 class MemoryStore:
@@ -143,6 +145,21 @@ class MemoryStore:
 
     def set_kv(self, key: str, value: str) -> None:
         self._kv[key] = value
+
+    def incr_kv(self, key: str, n: int) -> int:
+        v = int(self._kv.get(key) or 0) + n
+        self._kv[key] = str(v)
+        return v
+
+    def requeue(self, mints: list[str]) -> int:
+        """Put harvested rows back on the harvest queue (e.g. to add fills to older rows)."""
+        n = 0
+        for m in mints:
+            row = self._migrations.get(m)
+            if row is not None and row.get("harvested"):
+                row["harvested"] = False
+                n += 1
+        return n
 
 
 class RedisStore:
@@ -239,6 +256,26 @@ class RedisStore:
 
     def set_kv(self, key: str, value: str) -> None:
         self.r.hset(self.K_KV, key, value)
+
+    def incr_kv(self, key: str, n: int) -> int:
+        return int(self.r.hincrby(self.K_KV, key, n))
+
+    def requeue(self, mints: list[str]) -> int:
+        n = 0
+        for m in mints:
+            raw = self.r.hget(self.K_MIG, m)
+            if not raw:
+                continue
+            row = json.loads(raw)
+            if not row.get("harvested"):
+                continue
+            row["harvested"] = False
+            p = self.r.pipeline()
+            p.hset(self.K_MIG, m, json.dumps(row))
+            p.zadd(self.K_PENDING, {m: row["ts"]})
+            p.execute()
+            n += 1
+        return n
 
 
 def make_store(redis_url: str | None) -> Store:

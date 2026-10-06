@@ -48,7 +48,8 @@ class Settings(BaseSettings):
     # successful tx (about 3.2k for 48h). Set to 0 to disable.
     initial_backfill_s: float = 48 * 3600
     rpc_concurrency: int = 4  # parallel getTransaction calls
-    rpc_rps: float = 5  # global request pace; Helius free tier allows ~10/s and 429s above it
+    # Global request pace. Helius free tier allows 10/s, Developer 50/s; a 429 backs every caller off.
+    rpc_rps: float = 15
     rpc_429_penalty_s: float = 2  # every caller backs off this long after a 429
     # Highest transaction version to accept from getTransaction. v1 txs exist on mainnet (2026);
     # 0 made the RPC return null for them. Any u8 is accepted, so ask for everything.
@@ -74,6 +75,16 @@ class Settings(BaseSettings):
     # ~3 Gecko calls per row at gecko_rpm -> about 8 rows/min; the batch just bounds one cycle.
     harvest_interval_s: float = 240
     harvest_batch: int = 40
+
+    # --- executable fills: swap-level simulation on PumpSwap reserves (needs RPC credits) ---
+    fills_enabled: bool = True
+    fills_full_window_min: int = 120  # every swap in this window after migration is fetched
+    fills_max_swaps: int = 400  # cap on transactions fetched per pool inside that window
+    fills_max_pages: int = 25  # signature pages (1000 each) per pool
+    fills_daily_credits: int = 250_000  # RPC credits the harvester may spend per UTC day
+    fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
+    fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
+    fill_latency_s: float = 3  # decision to landed transaction
 
     # --- survivor-entry hypothesis (C) ---
     entry_delays_min: list[int] = [0, 5, 15, 30, 60]

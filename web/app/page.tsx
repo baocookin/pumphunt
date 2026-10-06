@@ -34,16 +34,17 @@ type Stats = {
   hourly: { hour: string; creates_chain: number; creates_portal: number; migrations: number; migrations_portal: number }[];
 };
 type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; quote_mint?: string | null; harvested: boolean; source?: string };
-const WSOL = "So11111111111111111111111111111111111111112";
+const SOL_QUOTES = new Set(["So11111111111111111111111111111111111111112", "11111111111111111111111111111111"]);
 type Cell = { n: number; median?: number; win_rate?: number; top2pct_share?: number; p10?: number; p90?: number };
-type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number };
+type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number; fills_rows?: number; swaps_fetched?: number; credits_today?: number; fills_paused?: boolean };
 type Gecko = { calls?: number; rate_limited?: number; not_found?: number; errors?: number };
 type DataFile = { name: string; bytes: number; mtime: number };
 type Summary = {
-  harvested: number; with_data: number; alive_24h_rate: number; no_data?: Record<string, number>;
+  harvested: number; with_data: number; with_fills?: number; alive_24h_rate: number; no_data?: Record<string, number>;
   cells: Record<string, Cell>; verdict: { status: string; why: string };
+  fills?: Record<string, Record<string, Cell>>; fill_primary_size?: string | null; verdict_fill?: { status: string; why: string };
 };
-type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number };
+type Config = { entry_delays_min: number[]; horizons_min: number[]; cost_bps_round_trip: number; fill_sizes_sol?: number[]; fills_daily_credits?: number };
 
 const pct = (v?: number | null, d = 1) => (v === undefined || v === null || !Number.isFinite(v) ? "–" : `${(v * 100).toFixed(d)}%`);
 const signed = (v?: number) => (v === undefined || !Number.isFinite(v) ? "–" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
@@ -88,6 +89,9 @@ export default function Page() {
   const chainOk = lastOnChain > now - 15 * 60; // migrations are ~1/min, be patient
   const portalOk = (stats?.status.last_portal_ts ?? 0) > now - 120;
   const verdict = sum?.verdict.status ?? "…";
+  const verdictFill = sum?.verdict_fill?.status ?? "…";
+  const primarySize = sum?.fill_primary_size ?? "1";
+  const fillGrid = sum?.fills?.[primarySize];
   const full = stats?.chain_scope === "full";
   const feed = stats?.status.chain_feed;
   const portal = stats?.status.portal_feed;
@@ -115,8 +119,44 @@ export default function Page() {
         <div className="tile"><div className="k">Graduation / 24h (xác nhận on‑chain)</div><div className="v">{stats?.migrations_24h ?? "–"} <span className="k">/ {stats?.migrations_total ?? 0} tổng</span></div></div>
         <div className="tile"><div className="k">Graduation / 24h (PumpPortal)</div><div className="v">{stats?.migrations_24h_portal ?? "–"}</div></div>
         <div className="tile"><div className="k">Đã harvest nến</div><div className="v">{sum?.harvested ?? 0} <span className="k">alive 24h {pct(sum?.alive_24h_rate, 0)}</span></div></div>
-        <div className={`tile verdict ${verdict.toLowerCase()}`}><div className="k">Giả thuyết C (T+30m → 1h)</div><div className="v">{verdict}</div><div className="k">{sum?.verdict.why}</div></div>
+        <div className={`tile verdict ${verdictFill.toLowerCase()}`}><div className="k">Giả thuyết C, khớp lệnh thật {primarySize} SOL (T+30m → 1h)</div><div className="v">{verdictFill}</div><div className="k">{sum?.verdict_fill?.why}</div></div>
+        <div className={`tile verdict ${verdict.toLowerCase()}`}><div className="k">Giả thuyết C, theo nến −3.5% (T+30m → 1h)</div><div className="v">{verdict}</div><div className="k">{sum?.verdict.why}</div></div>
       </div>
+
+      <h2>Khớp lệnh thật trên reserve on‑chain (net sau trượt giá + phí pool + phí tx, {primarySize} SOL)</h2>
+      <table>
+        <thead>
+          <tr><th>Vào tại</th>{cfg?.horizons_min.map((h) => <th key={h}>giữ {h >= 60 ? `${h / 60}h` : `${h}m`}</th>)}</tr>
+        </thead>
+        <tbody>
+          {cfg?.entry_delays_min.map((d) => (
+            <tr key={d}>
+              <td>T+{d}m</td>
+              {cfg.horizons_min.map((h) => {
+                const c = fillGrid?.[`d${d}_h${h}`];
+                return (
+                  <td key={h}>
+                    {c && c.n > 0 ? (
+                      <>n={c.n} · med <span className={cls(c.median)}>{signed(c.median)}</span> · wr {pct(c.win_rate, 0)} · top2% {pct(c.top2pct_share, 0)}</>
+                    ) : <span className="k">n=0</span>}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>Cỡ lệnh (T+30m → 1h)</th><th>n</th><th>median net</th><th>thắng</th><th>p10</th><th>p90</th></tr></thead>
+        <tbody>
+          {Object.entries(sum?.fills ?? {}).map(([size, grid]) => {
+            const c = grid["d30_h60"];
+            return (
+              <tr key={size}><td>{size} SOL</td><td>{c?.n ?? 0}</td><td className={cls(c?.median)}>{signed(c?.median)}</td><td>{pct(c?.win_rate, 0)}</td><td>{signed(c?.p10)}</td><td>{signed(c?.p90)}</td></tr>
+            );
+          })}
+        </tbody>
+      </table>
 
       <h2>Harvester &amp; dữ liệu</h2>
       <div className="tiles">
@@ -125,6 +165,7 @@ export default function Page() {
           <div className="v">{hv?.pending ?? 0} <span className="k">chờ · {hv?.due ?? 0} tới hạn · {hv?.runs ?? 0} chu kỳ</span></div>
           <div className="k">{`có nến ${hv?.with_data ?? 0} · không giao dịch ${hv?.no_candles ?? 0} · không pool ${hv?.no_pool ?? 0}`}{hv?.last_run_ts ? ` · chạy cuối ${Math.max(0, Math.round((now - hv.last_run_ts) / 60))} phút trước` : ""}</div>
           <div className="k">{`Gecko ${gk?.calls ?? 0} call · ${gk?.rate_limited ?? 0} lần 429 · ${gk?.not_found ?? 0} không có`}</div>
+          <div className="k">{`Fills: ${hv?.fills_rows ?? 0} token có swap · ${hv?.swaps_fetched ?? 0} swap · credit RPC hôm nay ${hv?.credits_today ?? 0}${cfg?.fills_daily_credits ? ` / ${cfg.fills_daily_credits}` : ""}${hv?.fills_paused ? " · TẠM DỪNG (hết ngân sách)" : ""}`}</div>
           <div className="k mono">{hv?.last_error ?? ""}</div>
         </div>
         <div className="tile">
@@ -208,7 +249,7 @@ export default function Page() {
               <td className="mono"><a href={`https://solscan.io/token/${m.mint}`} target="_blank" rel="noreferrer">{short(m.mint)}</a></td>
               <td className="mono">{m.pool ? short(m.pool) : <span className="k">chưa rõ</span>}</td>
               <td>{m.slot ?? "–"}</td>
-              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? `${m.sol_amount.toFixed(2)}${m.quote_mint && m.quote_mint !== WSOL ? ` ${short(m.quote_mint)}` : ""}` : "–"}</td>
+              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? `${m.sol_amount.toFixed(2)}${m.quote_mint && !SOL_QUOTES.has(m.quote_mint) ? ` ${short(m.quote_mint)}` : ""}` : "–"}</td>
               <td>{m.source ?? "–"}</td>
               <td>{m.harvested ? "✓" : "chờ 25h"}</td>
             </tr>

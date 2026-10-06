@@ -30,11 +30,17 @@ from .chain_feed import ChainNotification, SolanaLogsFeed
 from .config import Settings
 from .events import Event
 from .feed import PumpPortalFeed
+from .fills import compute_fills
 from .gecko import GeckoTerminal
 from .jsonl import JsonlWriter
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import Store, hour_key
-from .survivor import compute_metrics
+from .survivor import compute_metrics, latest_by_mint
+from .swaps import SwapFetcher
+
+WSOL = "So11111111111111111111111111111111111111112"
+# pump.fun writes the system program id as quote_mint for SOL-quoted curves; older rows have None.
+SOL_QUOTES = {None, WSOL, "11111111111111111111111111111111"}
 
 # Subscribe to the wallet that signs migrations once it clearly is one keeper, not random users.
 SIGNER_MIN_N = 10
@@ -89,7 +95,12 @@ class Recorder:
             "no_candles": 0,
             "due": 0,  # rows older than harvest_after_s still waiting
             "pending": 0,  # rows not harvested yet at all
+            "fills_rows": 0,
+            "swaps_fetched": 0,
+            "credits_today": 0,
+            "fills_paused": False,
         }
+        self.fetcher: SwapFetcher | None = None
         self.rpc: SolanaRpc | None = None
         self.learned_authority: str | None = None
         self.learned_signer: str | None = None
@@ -507,6 +518,13 @@ class Recorder:
         hs = self.harvest_stats
         cutoff = now - self.cfg.harvest_after_s
         hs["due"], hs["pending"] = self.store.pending_counts(cutoff)
+        fills_on = self.cfg.fills_enabled and self.fetcher is not None
+        if fills_on:
+            hs["credits_today"] = int(self.store.get_kv(self._credits_key(now)) or 0)
+            hs["fills_paused"] = hs["credits_today"] >= self.cfg.fills_daily_credits
+            if hs["fills_paused"]:
+                hs["last_error"] = "fills: daily RPC credit budget reached; harvesting resumes tomorrow"
+                return 0
         rows = self.store.pending_harvest(cutoff, self.cfg.harvest_batch)
         # Current pool info for the whole batch in one or two calls (30 pools per call) instead of
         # one call per row: Gecko's per-IP budget is the harvester's bottleneck.
@@ -540,6 +558,13 @@ class Recorder:
             )
             if not pool:
                 metrics["reason"] = "no_pool"  # neither the chain nor Gecko knows a pool for this mint
+            if fills_on and pool and row.get("quote_mint") in SOL_QUOTES:
+                try:
+                    await self._add_fills(metrics, row, pool, t0, now)
+                except httpx.HTTPError as exc:
+                    hs["last_error"] = f"fills {row['mint'][:6]}: {describe_http_error(exc)}"
+                    print(f"[harvest] fills {row['mint'][:6]} rpc error {describe_http_error(exc)}; retrying")
+                    continue
             metrics.update(
                 {
                     "mint": row["mint"],
@@ -564,6 +589,61 @@ class Recorder:
         hs["last_run_ts"] = now
         hs["rows_last_run"] = done
         return done
+
+    @staticmethod
+    def _credits_key(now: float) -> str:
+        return "credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))
+
+    async def _add_fills(
+        self, metrics: dict[str, Any], row: dict[str, Any], pool: str, t0: int, now: float
+    ) -> None:
+        """Swap-level executable fills for one pool; spends RPC credits, which are metered per day."""
+        assert self.fetcher is not None
+        cfg = self.cfg
+        t_mig = int(row.get("chain_ts") or t0)
+        full_until = t_mig + cfg.fills_full_window_min * 60
+        points = sorted(
+            {
+                t_mig + (d + h) * 60 + cfg.fill_latency_s
+                for d in cfg.entry_delays_min
+                for h in cfg.horizons_min
+            }
+            | {t_mig + d * 60 + cfg.fill_latency_s for d in cfg.entry_delays_min}
+        )
+        # every decision time is a point: when the full window is capped (a very busy pool), the
+        # entry/exit states inside it still get their own transaction instead of a stale one
+        swaps, sw = await self.fetcher.fetch(pool, t_mig, full_until, cfg.fills_max_swaps, points)
+        hs = self.harvest_stats
+        hs["credits_today"] = self.store.incr_kv(self._credits_key(now), sw["credits"])
+        hs["swaps_fetched"] += sw["swaps"]
+        metrics["swaps"] = sw
+        metrics["fills"] = compute_fills(
+            swaps,
+            t_mig,
+            cfg.entry_delays_min,
+            cfg.horizons_min,
+            cfg.fill_sizes_sol,
+            cfg.fill_tx_fee_sol,
+            cfg.fill_latency_s,
+            now=now,
+        )
+        metrics["fills_t0"] = t_mig
+        if swaps:
+            hs["fills_rows"] += 1
+
+    def requeue_for_fills(self) -> int:
+        """Once per deployment: rows harvested before fills existed go through the harvester again."""
+        if not self.cfg.fills_enabled or self.store.get_kv("fills_requeued_v1"):
+            return 0
+        rows = latest_by_mint(self.store.survivor_rows())
+        mints = [
+            r["mint"]
+            for r in rows
+            if r.get("pool") and not r.get("fills") and r.get("quote_mint") in SOL_QUOTES
+        ]
+        n = self.store.requeue(mints)
+        self.store.set_kv("fills_requeued_v1", str(int(time.time())))
+        return n
 
     async def run_harvester(self, client: httpx.AsyncClient) -> None:
         self.gecko = GeckoTerminal(
@@ -615,6 +695,9 @@ class Recorder:
                     max_tx_version=self.cfg.rpc_max_tx_version,
                 )
             print(f"[recorder] {self.prime_claims()} confirmed rows already in the registry")
+            if self.rpc is not None and self.cfg.fills_enabled:
+                self.fetcher = SwapFetcher(self.rpc, max_pages=self.cfg.fills_max_pages)
+                print(f"[recorder] {self.requeue_for_fills()} harvested rows re-queued for fills")
             tasks = [self.run_chain(), self.run_status()]
             if self.rpc is not None and self.cfg.rpc_poll:
                 tasks.append(self.run_poller())

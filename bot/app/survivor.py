@@ -118,9 +118,21 @@ def _cell_stats(vals: list[float]) -> dict[str, Any]:
     }
 
 
+def latest_by_mint(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A token harvested twice (e.g. re-queued to add fills) counts once: its latest row."""
+    seen: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        seen[r.get("mint", id(r))] = r
+    return list(seen.values())
+
+
 def summarize(
-    rows: Sequence[dict[str, Any]], delays_min: Sequence[int], horizons_min: Sequence[int]
+    rows: Sequence[dict[str, Any]],
+    delays_min: Sequence[int],
+    horizons_min: Sequence[int],
+    sizes_sol: Sequence[float] = (1,),
 ) -> dict[str, Any]:
+    rows = latest_by_mint(rows)
     cells: dict[str, dict[str, Any]] = {}
     for d in delays_min:
         for h in horizons_min:
@@ -137,13 +149,33 @@ def summarize(
         if r.get("no_data"):
             reason = str(r.get("reason") or "unknown")
             no_data[reason] = no_data.get(reason, 0) + 1
+    # executable fills: same grid, one table per position size, net of impact and fees
+    fills: dict[str, dict[str, dict[str, Any]]] = {}
+    for size in sizes_sol:
+        key_s = str(size)
+        fills[key_s] = {}
+        for d in delays_min:
+            for h in horizons_min:
+                key = f"d{d}_h{h}"
+                nets = []
+                for r in rows:
+                    cell = ((r.get("fills") or {}).get(key) or {}).get(key_s)
+                    if cell and cell.get("net") is not None:
+                        nets.append(cell["net"])
+                fills[key_s][key] = _cell_stats(nets)
+    primary_size = "1" if "1" in fills else next(iter(fills), None)
     return {
         "harvested": harvested,
         "with_data": with_data,
+        "with_fills": sum(1 for r in rows if r.get("fills")),
         "no_data": no_data,
         "alive_24h_rate": (alive / with_data) if with_data else 0.0,
         "cells": cells,
         "verdict": verdict(cells.get("d30_h60", {"n": 0})),
+        "fills": fills,
+        "fill_primary_size": primary_size,
+        # the verdict that answers "would a 1 SOL position have made money": executable, not marked
+        "verdict_fill": verdict((fills.get(primary_size) or {}).get("d30_h60", {"n": 0})),
     }
 
 

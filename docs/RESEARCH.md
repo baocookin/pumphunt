@@ -123,3 +123,12 @@ Bạn đang cân nhắc template `mc-template-fastapi-with-redis` của Bunny. N
 * Học thuật: [Marino et al. 2026 – Predicting the success of new cryptotokens: the Pump.fun case (arXiv:2602.14860)](https://arxiv.org/abs/2602.14860) · [Kamat – Graduation Regime Windows, survival analysis of 832 941 launches (SSRN)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6915560) · [arXiv:2607.02823 – auditing graduation labels](https://arxiv.org/pdf/2607.02823) · [arXiv:2512.11850 – Solana memecoin phenomenon](https://arxiv.org/pdf/2512.11850)
 * Tham chiếu mã nguồn mở: [TreeCityWes/Pump-Fun-Trading-Bot-Solana](https://github.com/TreeCityWes/Pump-Fun-Trading-Bot-Solana) (TP bậc 25 %/25 %, SL −10 %, moon‑bag 25 %), [Tinuz/solsniperbot](https://github.com/Tinuz/solsniperbot)
 * Template hạ tầng: [jamie-at-bunny/mc-template-fastapi-with-redis](https://github.com/jamie-at-bunny/mc-template-fastapi-with-redis)
+
+## Sửa đổi phương pháp (06/10/2026): thước đo chính là khớp lệnh thật
+
+Kill criteria giữ nguyên (n≥300; KILL nếu median net ≤ −1.25% hoặc top‑2% ≥ 50% lãi; PASS nếu median > +2% và win rate ≥ 45%), nhưng đại lượng "net" được đo lại:
+
+* **Trước**: close nến (1 rồi 5 phút) tại T+d và T+d+h, trừ 3.5% round‑trip cố định.
+* **Sau**: mô phỏng vị thế S SOL trên reserve thật của pool PumpSwap đọc từ event swap on‑chain (reserve trước swap, virtual quote reserve, phí lp/protocol/creator thực tế), vào ở trạng thái 3 giây sau quyết định, ra tương tự, trừ phí pool hai chiều và 0.001 SOL phí tx mỗi chiều. Ô chính: S = 1 SOL, T+30m, giữ 1h. Các cỡ 0.5/2/5 SOL báo kèm để thấy chi phí thanh khoản.
+
+Lý do: xác minh trên mainnet cho thấy pool có virtual quote reserve và thanh khoản thật có thể bị rút gần hết, khiến trượt giá thực tế cao hơn nhiều so với 3.5%. Thước đo theo nến vẫn được tính và hiển thị để đối chiếu, không dùng làm verdict.

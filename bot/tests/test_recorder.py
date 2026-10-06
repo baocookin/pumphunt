@@ -1,6 +1,7 @@
 """Recorder, RPC confirmation and harvester wired together with fakes; no network."""
 
 import asyncio
+import time
 
 import pytest
 from helpers import PK_A, PK_B, fake_migrate_tx, fake_pubkey
@@ -11,9 +12,11 @@ from app.config import Settings
 from app.events import Event
 from app.gecko import Candle
 from app.jsonl import read_jsonl
-from app.recorder import SIGNER_MIN_N, Recorder
+from app.recorder import SIGNER_MIN_N, WSOL, Recorder
 from app.rpc import find_migrate_ix
 from app.store import MemoryStore, hour_key
+from app.survivor import summarize
+from app.swaps import SwapFetcher
 
 WA = fake_pubkey(777)
 
@@ -565,3 +568,97 @@ def test_harvest_resolves_pool_for_portal_only_migrations(rec):
     assert by_mint["M3"]["pool"] is None and by_mint["M3"]["no_data"] is True
     assert sorted(g.resolved) == ["M2", "M3"]
     assert rec.store.migrations()[0]["harvested"] is True
+
+
+# ---- executable fills through the harvester ----
+def _pumpswap_fixtures():
+    import json as _json
+    from pathlib import Path
+
+    fx = Path(__file__).parent / "fixtures" / "pumpswap"
+    return {p.stem: _json.loads(p.read_text()) for p in sorted(fx.glob("*.json"))}
+
+
+class FakeRpcSigs(FakeRpc):
+    """FakeRpc that also serves per-address signature lists (newest first) for the swap fetcher."""
+
+    def __init__(self, txs, by_address):
+        super().__init__(txs)
+        self.by_address = by_address
+
+    async def get_signatures(self, address, limit=1000, before=None, until=None):
+        self.sig_calls.append((address, limit, before, until))
+        return list(self.by_address.get(address, []))[:limit]
+
+
+def test_harvester_adds_executable_fills_and_meters_credits(rec):
+    real = _pumpswap_fixtures()
+    pool = "F4WJkbXMz8C6GXGeymcKQpXaVkUMdyrqLHc7buEUMRJp"
+    times = {k: v["blockTime"] for k, v in real.items()}
+    t_mig = min(times.values()) - 120
+    rec.cfg.entry_delays_min, rec.cfg.horizons_min = [0, 5], [1, 5]
+    rec.cfg.fill_sizes_sol = [0.5, 1]
+    sigs = [
+        {"signature": k, "blockTime": times[k], "slot": real[k]["slot"], "err": None}
+        for k in sorted(times, key=lambda k: -times[k])
+    ]
+    rec.rpc = FakeRpcSigs(dict(real), {pool: sigs})
+    rec.fetcher = SwapFetcher(rec.rpc)
+    rec.on_chain(
+        ChainEvent(
+            float(t_mig),
+            1,
+            "mig",
+            "migrate",
+            {"mint": "TOK", "pool": pool, "timestamp": t_mig, "quote_mint": WSOL},
+        )
+    )
+    cs = [Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)]
+    g = FakeGecko(cs)
+    now = t_mig + 26 * 3600
+    assert asyncio.run(rec.harvest_once(g, now=now)) == 1
+    row = rec.store.survivor_rows()[0]
+    assert row["swaps"]["swaps"] == 4 and row["swaps"]["credits"] == 1 + 4 and row["fills_t0"] == t_mig
+    cell = row["fills"]["d0_h5"]
+    assert set(cell) == {"0.5", "1"} and cell["1"]["net"] < cell["0.5"]["net"] < 0.1
+    assert cell["1"]["liquidity_in_sol"] > 17 and cell["1"]["fees_sol"] > 0.01
+    hs = rec.harvest_stats
+    assert (
+        hs["fills_rows"] == 1
+        and hs["swaps_fetched"] == 4
+        and hs["credits_today"] == 5
+        and hs["fills_paused"] is False
+    )
+    assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "5"
+    # the summary carries a per-size executable table and its own verdict
+    s = summarize(rec.store.survivor_rows(), [0, 5], [1, 5], [0.5, 1])
+    assert s["with_fills"] == 1 and s["fills"]["1"]["d0_h5"]["n"] == 1 and s["fill_primary_size"] == "1"
+    assert s["verdict_fill"]["status"] == "INSUFFICIENT"
+
+
+def test_harvester_pauses_when_the_daily_credit_budget_is_spent(rec):
+    rec.cfg.fills_daily_credits = 10
+    rec.rpc = FakeRpcSigs({}, {})
+    rec.fetcher = SwapFetcher(rec.rpc)
+    now = 1_700_000_000.0
+    rec.store.incr_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now)), 10)
+    rec.on_chain(mig(now - 100_000, mint="M1", pool="P1"))
+    g = FakeGecko([])
+    assert asyncio.run(rec.harvest_once(g, now=now)) == 0
+    assert rec.harvest_stats["fills_paused"] is True and "budget" in rec.harvest_stats["last_error"]
+    assert rec.store.pending_counts(now)[1] == 1  # the row waits instead of being harvested without fills
+
+
+def test_rows_harvested_before_fills_are_requeued_once(rec):
+    t0 = 1_700_000_000
+    rec.on_chain(mig(float(t0), mint="OLD", pool="P1"))
+    rec.on_chain(mig(float(t0), mint="USDC", pool="P2"))
+    rec.store.mark_harvested("OLD", {"mint": "OLD", "pool": "P1", "quote_mint": None})
+    rec.store.mark_harvested("USDC", {"mint": "USDC", "pool": "P2", "quote_mint": "EPjF"})  # not SOL-quoted
+    assert rec.requeue_for_fills() == 1
+    assert (
+        rec.store.pending_counts(t0 + 10)[1] == 1
+        and rec.store.pending_harvest(t0 + 10, 10)[0]["mint"] == "OLD"
+    )
+    assert rec.requeue_for_fills() == 0  # flagged: never again
+    assert rec.store.get_kv("fills_requeued_v1")

@@ -137,17 +137,25 @@ class SolanaRpc:
         if wait > 0:
             await asyncio.sleep(wait)
 
-    async def _call(self, method: str, params: list[Any]) -> Any:
-        await self._pace()
-        self.stats["calls"] += 1
-        r = await self.c.post(self.url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-        if r.status_code == 429:
-            self.stats["rate_limited"] += 1
-            self._next = max(self._next, time.monotonic() + self.penalty_s)
-        if r.status_code >= 400:
-            self.stats["errors"] += 1
-        r.raise_for_status()
-        return r.json().get("result")
+    async def _call(self, method: str, params: list[Any], retries: int = 3) -> Any:
+        """One JSON-RPC call. A 429 pushes every caller back by `penalty_s` and is retried a few
+        times here, so callers only see rate limiting that persists."""
+        for attempt in range(retries + 1):
+            await self._pace()
+            self.stats["calls"] += 1
+            r = await self.c.post(
+                self.url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+            )
+            if r.status_code == 429:
+                self.stats["rate_limited"] += 1
+                self._next = max(self._next, time.monotonic() + self.penalty_s * (attempt + 1))
+                if attempt < retries:
+                    continue
+            if r.status_code >= 400:
+                self.stats["errors"] += 1
+            r.raise_for_status()
+            return r.json().get("result")
+        return None
 
     async def get_transaction(self, signature: str) -> dict[str, Any] | None:
         opts = {
