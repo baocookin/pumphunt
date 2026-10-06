@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="PH_", extra="ignore")
 
     # --- infra ---
+    build_sha: str = "dev"  # set by the Docker build; shown in /api/health and the dashboard
     redis_url: str | None = "redis://localhost:6379"
     data_dir: str = "data"
     # Static export of the Next.js dashboard, served at "/" when the directory exists.

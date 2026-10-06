@@ -8,6 +8,7 @@ name: Build and Deploy to Magic Containers
 on:
   push:
     branches: [main]
+  workflow_dispatch: # manual rebuild + redeploy from the Actions tab
 
 jobs:
   build:
@@ -29,6 +30,8 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}:latest

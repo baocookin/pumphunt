@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api`;
 
 type ChainFeed = { connected?: boolean; connects?: number; subscribed?: number; notifications?: number; events?: number; last_error?: string | null; mentions?: string[] };
-type Rpc = { confirmed?: number; failed?: number; no_event?: number; withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null };
+type Rpc = { confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null };
 type Stats = {
+  build_sha?: string;
   status: {
     now?: number; last_chain_ts?: number; last_portal_ts?: number; counts?: Record<string, number>;
     chain_feed?: ChainFeed | null; rpc?: Rpc | null; mentions?: string[];
@@ -65,7 +66,10 @@ export default function Page() {
   }, []);
 
   const now = Date.now() / 1000;
-  const chainOk = (stats?.status.last_chain_ts ?? 0) > now - 15 * 60; // migrations are ~1/min, be patient
+  // On-chain data arrives via the websocket feed or via RPC confirmation of PumpPortal
+  // migrations; either one being fresh means we are getting slots + pools from chain.
+  const lastOnChain = Math.max(stats?.status.last_chain_ts ?? 0, stats?.status.rpc?.last_rpc_ts ?? 0);
+  const chainOk = lastOnChain > now - 15 * 60; // migrations are ~1/min, be patient
   const portalOk = (stats?.status.last_portal_ts ?? 0) > now - 120;
   const verdict = sum?.verdict.status ?? "…";
   const full = stats?.chain_scope === "full";
@@ -76,7 +80,8 @@ export default function Page() {
     <main>
       <h1>
         pumphunt <span className="badge">recorder · {stats?.chain_scope ?? "…"}</span>
-        <span className={`badge ${chainOk ? "ok" : "bad"}`}>chain feed {chainOk ? "ok" : "no data"}</span>
+        <span className="badge mono" title={stats?.build_sha}>build {stats?.build_sha ? stats.build_sha.slice(0, 7) : "…"}</span>
+        <span className={`badge ${chainOk ? "ok" : "bad"}`}>on‑chain {chainOk ? "ok" : "no data"}</span>
         <span className={`badge ${portalOk ? "ok" : "bad"}`}>pumpportal {portalOk ? "ok" : "no data"}</span>
       </h1>
       {err && <p className="err">{err}</p>}

@@ -47,7 +47,7 @@ def _last_hours(n: int) -> list[str]:
 
 @api.get("/health")
 def health():
-    return {"ok": True, "chain_scope": settings.chain_scope}
+    return {"ok": True, "chain_scope": settings.chain_scope, "build_sha": settings.build_sha}
 
 
 @api.get("/stats")
@@ -61,6 +61,7 @@ def stats():
     full = settings.chain_scope == "full"
     return {
         "status": store.status(),
+        "build_sha": settings.build_sha,
         "chain_scope": settings.chain_scope,
         # In "migrations" scope the chain feed never sees creates; PumpPortal is the only count.
         "creates_24h": chain_total if full else portal_total,
