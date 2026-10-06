@@ -74,7 +74,14 @@ class SwapFetcher:
         self._gtfa_failures = 0
         # tokenTransfer filter: None while unverified (not used), True verified, False off/unsafe
         self.token_filter: bool | None = None if token_filter else False
-        self.filter_checks = {"same": 0, "reduced": 0, "unreduced": 0, "violations": 0, "audits": 0}
+        self.filter_checks = {
+            "same": 0,
+            "reduced": 0,
+            "unreduced": 0,
+            "violations": 0,
+            "audits": 0,
+            "repaired": 0,
+        }
         self.filter_note: str | None = None
         self._filtered_windows = 0
         self.credits = 0  # everything this fetcher spent, for per-pool metering
@@ -297,6 +304,9 @@ class SwapFetcher:
                     break
             first = False
         swaps.sort(key=lambda s: s.order)
+        repaired = await self._repair_gaps(pool, swaps) if use_f else []
+        if repaired:
+            swaps = sorted([*swaps, *repaired], key=lambda s: s.order)
         return swaps, {
             "method": "gtfa",
             "filtered": use_f,
@@ -304,11 +314,40 @@ class SwapFetcher:
             "counted": counted,
             "complete": complete,
             "covered_to": t_to if complete else covered_to,
+            "repaired": len(repaired),
             "chain_breaks": chain_breaks(swaps),
             "quote_gaps": quote_gaps(swaps)[0],
             "quote_gap_sol": quote_gaps(swaps)[1] / 1e9,
             "credits": self.credits - spent,
         }
+
+    async def _repair_gaps(self, pool: str, swaps: list[Swap], max_gaps: int = 20) -> list[Swap]:
+        """Swaps a filtered window missed, read back without the filter.
+
+        Between two consecutive swaps the token reserves hand over exactly, so a break means
+        something in between is missing. Measured on production: Helius' tokenTransfer filter
+        dropped one buy in ~210,000 (routed through an aggregator in a version-1 transaction).
+        The slot range of each break is read again unfiltered and the swaps found are added."""
+        known = {(s.signature, s.ev_index) for s in swaps}
+        gaps = [(a, b) for a, b in zip(swaps, swaps[1:], strict=False) if b.base_pre != a.base_post]
+        found: list[Swap] = []
+        for a, b in gaps[:max_gaps]:
+            flt = {"status": "succeeded", "slot": {"gte": a.slot, "lte": b.slot}}
+            token = None
+            for _ in range(self.scan_pages):
+                res = await self._page(
+                    pool, full=True, sort="asc", limit=self.scan_page, flt=flt, token=token
+                )
+                for item in res.get("data") or []:
+                    for sw in swaps_from_tx(item, pool=pool):
+                        if (sw.signature, sw.ev_index) not in known:
+                            known.add((sw.signature, sw.ev_index))
+                            found.append(sw)
+                token = res.get("paginationToken")
+                if not token:
+                    break
+        self.filter_checks["repaired"] = self.filter_checks.get("repaired", 0) + len(found)
+        return found
 
     async def _check_filter(
         self, pool: str, first: dict[str, Any], used: bool, t_from: int, t_to: int, mint: str, limit: int
@@ -355,6 +394,7 @@ class SwapFetcher:
             "counted": len(inside),
             "complete": complete,
             "covered_to": covered_to,
+            "repaired": 0,
             "chain_breaks": chain_breaks(swaps),
             "quote_gaps": quote_gaps(swaps)[0],
             "quote_gap_sol": quote_gaps(swaps)[1] / 1e9,

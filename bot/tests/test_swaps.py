@@ -73,7 +73,9 @@ def test_the_token_filter_is_used_only_once_verified():
     chain.calls.clear()
     swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))
     assert st["filtered"] and st["fetched"] == 4 and len(swaps) == 4 and st["complete"]
-    assert len(chain.calls) == 1 and chain.calls[0]["filtered"]
+    assert chain.calls[0]["filtered"]
+    # the fixture swaps are a sample, not consecutive: their gaps are read again unfiltered, in vain
+    assert st["repaired"] == 0 and all(not c["filtered"] for c in chain.calls[1:])
     # Helius serves the filter at finalized commitment only; unfiltered reads stay at confirmed
     assert chain.calls[0]["commitment"] == "finalized"
     chain.calls.clear()
@@ -211,3 +213,27 @@ def test_merge_dedupes_and_encode_is_compact():
 def test_rpc_error_flags_unsupported_methods():
     assert RpcError(-32601, "Method not found").method_unsupported
     assert not RpcError(-32602, "Invalid params").method_unsupported
+
+
+def test_a_swap_the_filter_missed_is_read_back_unfiltered():
+    """Three consecutive real swaps; the filtered read lacks the middle one (as Helius' index
+    once did for a routed version-1 buy). The token-side break gives it away and the slot range
+    is read again without the filter."""
+    ei = json.loads((CHAIN / "buy_exact_quote_in.json").read_text())
+    se = json.loads((CHAIN / "sell.json").read_text())
+    pool = ei["pool"]
+    a, x = ei["txs"]
+    x_again, b = se["txs"]
+    assert se["pool"] == pool and x["transaction"]["signatures"] == x_again["transaction"]["signatures"]
+    chain = FakeChain([a, x, b], pool=pool, missed={x["transaction"]["signatures"][0]})
+    f = SwapFetcher(chain)
+    f.token_filter = True
+    swaps, st = run(f.window(pool, a["blockTime"] - 1, b["blockTime"] + 1, 1000, mint=MINT))
+    assert st["filtered"] and st["fetched"] == 2 and st["repaired"] == 1
+    assert len(swaps) == 3 and st["chain_breaks"] == 0 and f.filter_checks["repaired"] == 1
+    assert [s.order for s in swaps] == sorted(s.order for s in swaps)
+    repair = chain.calls[-1]
+    assert not repair["filtered"] and repair["commitment"] == "confirmed"
+    # an unfiltered window is never "repaired": a break there is not the filter's doing
+    plain, st2 = run(SwapFetcher(FakeChain([a, b], pool=pool), token_filter=False).window(pool, 0, 2e9, 1000))
+    assert st2["repaired"] == 0 and st2["chain_breaks"] == 1
