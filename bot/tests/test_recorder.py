@@ -30,7 +30,13 @@ class FakeGecko:
         return [c for c in self.candles if start <= c.ts <= end]
 
     async def pool_info(self, pool):
+        self.calls += 1
         return {"reserve_in_usd": "12345.6"}
+
+    async def pools_info_multi(self, pools):
+        self.calls += 1
+        self.multi = list(pools)
+        return {p: {"address": p, "reserve_in_usd": "12345.6"} for p in pools}
 
     async def resolve_pool(self, mint):
         self.resolved.append(mint)
@@ -543,7 +549,8 @@ def test_harvest_waits_then_computes(rec):
     assert abs(cell["gross"] - (1.090 / 1.030 - 1)) < 1e-9
     # nothing left pending
     assert asyncio.run(rec.harvest_once(g, now=t0 + 200)) == 0
-    assert g.calls == 1 and g.resolved == []
+    assert g.calls == 2 and g.resolved == []  # one batched info call + one candles call, no per-row info
+    assert g.multi == ["P1"]
 
 
 def test_harvest_resolves_pool_for_portal_only_migrations(rec):
