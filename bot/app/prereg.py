@@ -67,7 +67,9 @@ HYPOTHESES: list[dict[str, Any]] = [
 
 # Feature rules join here, each with its own `since` (its registration time), after being chosen on
 # the exploration window. At most three; each is tested once, on rows after its registration.
+# Entries carry "rule": True, which adds the median-interval condition to a PASS (rule_verdict).
 RULES: list[dict[str, Any]] = []
+RUG = -0.9  # a net at or below this is a near-total loss (reported, not a criterion)
 
 
 def median_ci(vals: Sequence[float], z: float = 1.96) -> tuple[float, float] | None:
@@ -86,9 +88,20 @@ def _net(row: dict[str, Any]) -> float | None:
     return cell.get("net") if cell else None
 
 
+def rule_verdict(st: dict[str, Any], ci: tuple[float, float] | None) -> dict[str, str]:
+    """A feature rule's verdict (docs/PREREG.md): C's criteria, and a PASS also needs the lower
+    bound of the median's 95% interval above zero, since several rules are tested."""
+    v = verdict(st)
+    if v["status"] == "PASS" and (ci is None or ci[0] <= 0):
+        lo = "–" if ci is None else f"{ci[0]:+.2%}"
+        return {"status": "INCONCLUSIVE", "why": f"{v['why']}; median CI lower bound {lo} <= 0"}
+    return v
+
+
 def evaluate(rows: Sequence[dict[str, Any]], now: float | None = None) -> dict[str, Any]:
     """Each registered hypothesis on its own sample: counts, the primary cell's statistics, the
-    verdict, and how far the sample is."""
+    verdict, and how far the sample is. The mean and the share of near-total losses are reported
+    next to the (median-based) verdict: a median does not see a rug tail."""
     current = [
         r for r in latest_by_mint(rows) if r.get("fills") and (r.get("fills_version") or 1) >= FILLS_VERSION
     ]
@@ -100,6 +113,7 @@ def evaluate(rows: Sequence[dict[str, Any]], now: float | None = None) -> dict[s
         sel = [r for r in sample if member(r)]
         nets = [v for r in sel if (v := _net(r)) is not None]
         st = _cell_stats(nets)
+        ci = median_ci(nets)
         out.append(
             {
                 "name": h["name"],
@@ -107,9 +121,10 @@ def evaluate(rows: Sequence[dict[str, Any]], now: float | None = None) -> dict[s
                 "since": h["since"],
                 "eligible": len(sample),  # harvested rows in the sample window
                 "members": len(sel),
-                **{k: st.get(k) for k in ("n", "median", "win_rate", "p10", "p90", "top2pct_share")},
-                "median_ci95": median_ci(nets),
-                "verdict": verdict(st),
+                **{k: st.get(k) for k in ("n", "median", "mean", "win_rate", "p10", "p90", "top2pct_share")},
+                "rug_share": sum(v <= RUG for v in nets) / len(nets) if nets else None,
+                "median_ci95": ci,
+                "verdict": rule_verdict(st, ci) if h.get("rule") else verdict(st),
             }
         )
     return {

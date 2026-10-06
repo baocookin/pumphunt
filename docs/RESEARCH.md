@@ -6,6 +6,44 @@ Tài liệu này tóm tắt những gì tìm được, kết luận chiến lư�
 
 Nghiên cứu riêng về snipe token mới, phép đo trên 77.043 launch tháng 9/2026, bộ dữ liệu forward chính xác tới slot, và giả thuyết S đăng ký trước: [`SNIPER.md`](SNIPER.md). Kết luận chính: trên cùng các launch, vé đứng ngay sau lệnh mua của dev có EV +12% (KTC 95% +10,9…+13,2%), vé vào ~1 giây sau có EV −8% (−8,1…−7,7%), không bộ lọc đơn giản nào đổi dấu; vị trí có lãi là vị trí bundle của người tạo token.
 
+## Thăm dò luật đặc trưng (06/10/2026, trước cửa sổ thăm dò)
+
+**Dữ liệu dùng để thăm dò:**
+- Các dòng được harvest trước `PREREG_TS`, tức migration ngày 4–5/10. Đây chỉ là thăm dò, không phải bằng chứng.
+- 307 pool C2: ≥ 10 SOL thật, và có swap trong 60 giây trước T+30.
+- Ô đo: vào T+30, giữ 1 giờ, 1 SOL, khớp lệnh thật.
+- Bảng đầy đủ: `/api/survivor/explore` → mẫu `before`.
+
+**Kết quả:**
+
+| Nhóm | n | Trung vị | Trung bình | Thắng | Mất ≥ 90% |
+|---|---|---|---|---|---|
+| Toàn bộ C2 | 307 | −41,7% | −32,4% | 29% | 26% |
+| Token tự tốt nghiệp: dev mua ≥ 80 SOL ngay trong lệnh tạo (40% của C2) | 123 | −1,4% | −45% | 34% | 47% |
+| Token mà người khác lấp đầy curve | 184 | −42,5% | −24% | 26% | 12% |
+| Giá tại T+30 bằng 0,7–1,15 lần giá migration, kèm mua ròng ≥ 1 SOL trong 5 phút trước | 52 | +2,8% (KTC +1,6% … +5,4%) | −5,6% | 75% | 13% |
+
+Về nhóm token tự tốt nghiệp: sau migration, dev nắm khoảng 79% cung nên có thể rút cạn pool bất cứ lúc nào. Trung vị của nhóm này ở nửa đầu là −0,6%, ở nửa sau là −98,7%.
+
+Về nhóm cuối:
+- Trung vị như nhau ở cả hai nửa, và không đổi khi xê dịch ngưỡng.
+- Nhưng toàn bộ các ca về 0 đều là token tự tốt nghiệp. Bỏ chúng đi thì chỉ còn n = 11.
+
+Không nhóm nào có trung bình dương ổn định.
+
+**Cam kết quy trình** (ghi lại trước khi xem dữ liệu của cửa sổ thăm dò):
+1. Tiêu chí của C, C2 và của các luật dựa trên trung vị, và được giữ nguyên (`PREREG.md`). Trung vị không thấy đuôi rug, nên mọi bảng báo thêm trung bình và tỷ lệ mất ≥ 90% (`mean`, `rug_share`).
+2. Một luật chỉ được đăng ký nếu trên cửa sổ thăm dò, trung bình của nó dương ở cả hai nửa (chia theo thời gian), chứ không chỉ trung vị.
+3. Nếu một luật PASS theo tiêu chí nhưng trung bình trên mẫu kiểm định ≤ 0, kết luận ghi là "PASS theo trung vị, EV không dương". Đó không phải chiến lược có lãi.
+4. Lần chọn luật kế tiếp diễn ra khi cửa sổ có ≥ 600 dòng C2 kèm snapshot holder, dự kiến khoảng 10/10. Chọn trên 2/3 đầu, kiểm tra trên 1/3 sau, và chỉ đăng ký những luật qua được.
+   - Hướng thử theo cơ chế thứ nhất: loại token tự tốt nghiệp.
+   - Hướng thử thứ hai: tỷ trọng của ví dev và ví bundle trong snapshot holder tại T+30.
+
+**Sniper (S2):**
+- Bảng thăm dò theo đặc trưng lúc vào: `/api/sniper/explore`.
+- Chọn luật khi cửa sổ S có ≥ 1.500 vé classic (dự kiến khoảng 9/10), cùng quy tắc trung bình dương ở cả hai nửa.
+- Phép đo lịch sử (`SNIPER.md`, mục 3) không cho nhóm nào dương, nên hiện chưa có ứng viên.
+
 ## 0. Vòng 2 (10/2026): 6 agent phản biện — kết luận thay thế toàn bộ mục 4 bên dưới
 
 Bốn agent nghiên cứu (ai kiếm tiền thật · adverse selection 60s đầu · sân chơi ít chen chúc · kiểm toán bằng chứng), một agent fact‑check, một agent red‑team. Những gì sống sót:

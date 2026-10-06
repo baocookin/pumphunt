@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
+from .explore import explore_c, explore_s
 from .fills import size_key
 from .prereg import evaluate
 from .recorder import Recorder
@@ -146,6 +147,32 @@ def sniper_summary():
     body["recorder"] = store.status().get("sniper")
     _SNIPER_CACHE.update(ts=now, body=body)
     return body
+
+
+_EXPLORE_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _cached(key: str, ttl_s: float, compute):
+    now = time.time()
+    hit = _EXPLORE_CACHE.get(key)
+    if hit is not None and now - hit[0] < ttl_s:
+        return hit[1]
+    body = compute()
+    _EXPLORE_CACHE[key] = (now, body)
+    return body
+
+
+@api.get("/survivor/explore")
+def survivor_explore():
+    """Where feature rules for C2 are looked for (not evidence): feature terciles with the median,
+    mean, win rate and rug share, on the registered exploration window and on earlier rows."""
+    return _cached("c", 300, lambda: explore_c(store.survivor_rows()))
+
+
+@api.get("/sniper/explore")
+def sniper_explore():
+    """The same for sniper tickets (rules S2 onward), by what was public at the entry slot."""
+    return _cached("s", 60, lambda: explore_s(store.rows("sniper")))
 
 
 @api.get("/sniper/rows")
