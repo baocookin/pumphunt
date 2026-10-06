@@ -4,7 +4,7 @@ import base64
 
 from app import anchor
 from app.anchor import PUMP_PROGRAM, b58decode, b58encode
-from app.rpc import MIGRATE_IX
+from app.rpc import MIGRATE_IX, PUMP_AMM
 
 PK_A = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 PK_B = "So11111111111111111111111111111111111111112"
@@ -73,6 +73,7 @@ def fake_migrate_tx(
     while len(keys) < len(names):
         keys.append(fake_pubkey(100 + len(keys)))
     keys.append(PUMP_PROGRAM)
+    keys.append(PUMP_AMM)
     all_keys = keys + loaded_readonly
     # instruction account indexes follow the IDL order; index 1 must be the withdraw authority
     idx_of = {k: i for i, k in enumerate(all_keys)}
@@ -92,7 +93,13 @@ def fake_migrate_tx(
                 f"Program {PUMP_PROGRAM} success",
             ],
             "loadedAddresses": {"writable": [], "readonly": loaded_readonly},
-            "innerInstructions": [],
+            # the pool creation CPI into PumpSwap that every real migrate carries
+            "innerInstructions": [
+                {
+                    "index": 0,
+                    "instructions": [{"programIdIndex": keys.index(PUMP_AMM), "accounts": [], "data": ""}],
+                }
+            ],
         },
         "transaction": {
             "message": {

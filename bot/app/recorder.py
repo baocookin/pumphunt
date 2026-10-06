@@ -98,6 +98,10 @@ class Recorder:
                 "backfill_from": None,
             },
             "portal_mislabeled": 0,
+            "noop": 0,  # successful migrate tx that found the curve already migrated (race losers)
+            "retry_pending": 0,
+            "failed_final": 0,
+            "last_failed": None,
             "last_no_event": None,
             "withdraw_authority": None,
             "authority_static": None,
@@ -110,6 +114,12 @@ class Recorder:
         self._sig_mint: dict[str, str] = {}  # signature -> mint as the chain says
         self._portal_sig_mint: dict[str, str] = {}  # signature -> mint as PumpPortal said
         self._rpc_sem = asyncio.Semaphore(cfg.rpc_concurrency)
+        self._retry: dict[str, tuple[float, int]] = {}  # signature -> (seen_ts, attempts so far)
+        # seconds to wait before each getTransaction attempt, per trigger (RPC lag differs)
+        self.portal_delays: tuple[float, ...] = (3, 10, 30, 60)
+        self.chain_delays: tuple[float, ...] = (0, 3, 10)
+        self.poll_delays: tuple[float, ...] = (0, 5, 20)
+        self._poll_cursor: str | None = None  # newest signature seen by this process's poller
 
     def mentions(self) -> list[str]:
         out = [self.learned_authority or self.cfg.migration_authority]
@@ -193,7 +203,7 @@ class Recorder:
         """Record a sighting that carries the pool; count the mint as confirmed the first time."""
         status = self.store.add_migration(row)
         self.migrations.write(row)
-        if status != "dup":
+        if status in ("new", "filled"):
             self.store.incr("migrations_confirmed", hour)
         return status
 
@@ -211,7 +221,7 @@ class Recorder:
         if not self._claim(n.signature):
             return
         self.rpc_stats["triggered"]["chain"] += 1
-        self._spawn(self.confirm_migration(n.signature, n.ts, delays=(0, 3, 10)))
+        self._spawn(self.confirm_migration(n.signature, n.ts, delays=self.chain_delays))
 
     @staticmethod
     def _migration_row(
@@ -280,7 +290,7 @@ class Recorder:
                 self.migrations.write(row)
             if self.rpc is not None and self._claim(ev.signature):
                 self.rpc_stats["triggered"]["portal"] += 1
-                self._spawn(self.confirm_migration(ev.signature, ev.ts))
+                self._spawn(self.confirm_migration(ev.signature, ev.ts, delays=self.portal_delays))
 
     async def run_portal(self) -> None:
         self.portal_feed = PumpPortalFeed(
@@ -292,25 +302,44 @@ class Recorder:
 
     # ---- RPC confirmation of PumpPortal migrations ----
     async def confirm_migration(
-        self, signature: str, seen_ts: float, delays: tuple[float, ...] = (3, 10, 30, 60)
+        self,
+        signature: str,
+        seen_ts: float,
+        delays: tuple[float, ...] | None = None,
+        attempts: int = 0,
     ) -> bool:
-        """Fetch the migrate tx by signature, register pool + slot, and learn the withdraw authority."""
+        """Fetch the migrate tx by signature, register pool + slot, and learn the withdraw authority.
+
+        A fetch that fails every delay (rate limit, RPC lag) is queued for a later poll
+        instead of being forgotten: `attempts` counts those rounds."""
         assert self.rpc is not None
+        delays = self.portal_delays if delays is None else delays
         tx = None
+        err = None
         for delay in delays:
             await asyncio.sleep(delay)
             try:
                 async with self._rpc_sem:
                     tx = await self.rpc.get_transaction(signature)
             except httpx.HTTPError as exc:
-                print(f"[rpc] getTransaction failed: {describe_http_error(exc)}")
+                err = describe_http_error(exc)
                 tx = None
             if tx:
                 break
         if not tx:
             self.rpc_stats["failed"] += 1
+            self.rpc_stats["last_failed"] = {"signature": signature, "error": err or "not found"}
+            if attempts + 1 < self.cfg.retry_max_attempts:
+                self._retry[signature] = (seen_ts, attempts + 1)
+            else:
+                self.rpc_stats["failed_final"] += 1
+                print(f"[rpc] giving up on {signature} after {attempts + 1} rounds ({err or 'not found'})")
+            self.rpc_stats["retry_pending"] = len(self._retry)
             return False
         info = migration_from_tx(tx)
+        if info is not None and info.get("noop"):
+            self.rpc_stats["noop"] += 1
+            return False
         if info is None:
             self.rpc_stats["no_event"] += 1
             diag = {"signature": signature, **tx_diagnostics(tx)}
@@ -375,13 +404,17 @@ class Recorder:
 
     # ---- poller: the authority's signature list is the complete record of migrations ----
     async def poll_once(self, now: float | None = None) -> int:
-        """List the authority's signatures newer than the stored cursor (at most `backfill_s` back,
-        which is also the cold-start window) and confirm every successful one nobody claimed yet.
-        Returns how many transactions were handed to confirm_migration."""
+        """List the authority's signatures newer than this process's cursor and confirm every
+        successful one nobody claimed yet; then re-queue earlier fetch failures.
+
+        The first poll of a process always walks `backfill_s` back regardless of the stored
+        cursor: rows that already have a pool were claimed at startup, so the walk only costs
+        the listing plus whatever the previous run never managed to confirm (crash, rate
+        limits, feed outage). Returns how many transactions were handed to confirm_migration."""
         assert self.rpc is not None
         now = now or time.time()
         address = self.learned_authority or self.cfg.migration_authority
-        cursor = self.store.get_kv("poller_cursor")
+        cursor = self._poll_cursor
         floor = now - self.cfg.backfill_s
         st = self.rpc_stats["poller"]
         sigs: list[dict[str, Any]] = []
@@ -408,10 +441,16 @@ class Recorder:
             self.rpc_stats["triggered"]["poller"] += 1
             fetched += 1
             seen = float(s.get("blockTime") or now)
-            self._spawn(self.confirm_migration(s["signature"], seen, delays=(0, 5, 20)))
+            self._spawn(self.confirm_migration(s["signature"], seen, delays=self.poll_delays))
         if sigs:
-            st["cursor"] = sigs[0]["signature"]
+            self._poll_cursor = st["cursor"] = sigs[0]["signature"]
             self.store.set_kv("poller_cursor", st["cursor"])
+        # earlier failures get another round, a bounded batch per poll so a bad RPC day cannot pile up
+        for signature in list(self._retry)[: self.cfg.retry_batch]:
+            seen, attempts = self._retry.pop(signature)
+            fetched += 1
+            self._spawn(self.confirm_migration(signature, seen, delays=self.poll_delays, attempts=attempts))
+        self.rpc_stats["retry_pending"] = len(self._retry)
         return fetched
 
     async def run_poller(self) -> None:
@@ -489,7 +528,7 @@ class Recorder:
                 chain_feed=self.feed.stats if self.feed else None,
                 portal_feed=self.portal_feed.stats if self.portal_feed else None,
                 portal_pools=self.portal_pools,
-                rpc=self.rpc_stats,
+                rpc={**self.rpc_stats, "transport": self.rpc.stats if self.rpc else None},
                 mentions=self.mentions(),
             )
             await asyncio.sleep(5)
@@ -498,7 +537,10 @@ class Recorder:
         async with httpx.AsyncClient(timeout=30) as client:
             if self.cfg.rpc_confirm:
                 self.rpc = SolanaRpc(
-                    client, self.cfg.solana_http_url or http_url_from_ws(self.cfg.solana_ws_url)
+                    client,
+                    self.cfg.solana_http_url or http_url_from_ws(self.cfg.solana_ws_url),
+                    rps=self.cfg.rpc_rps,
+                    penalty_s=self.cfg.rpc_429_penalty_s,
                 )
             print(f"[recorder] {self.prime_claims()} confirmed rows already in the registry")
             tasks = [self.run_chain(), self.run_status()]

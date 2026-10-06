@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     rpc_poll: bool = True
     poll_s: float = 30
     backfill_s: float = 6 * 3600  # how far back a cold start (or a lost cursor) walks
-    rpc_concurrency: int = 4  # parallel getTransaction calls (Helius free tier allows ~10/s)
+    rpc_concurrency: int = 4  # parallel getTransaction calls
+    rpc_rps: float = 5  # global request pace; Helius free tier allows ~10/s and 429s above it
+    rpc_429_penalty_s: float = 2  # every caller backs off this long after a 429
+    retry_max_attempts: int = 6  # a tx whose fetch failed is retried on later polls this many times
+    retry_batch: int = 50  # failed fetches re-queued per poll
 
     # Secondary feed (coverage check + migration fallback). Free channels, no API key needed.
     pumpportal_enabled: bool = True
