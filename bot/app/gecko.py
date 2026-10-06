@@ -24,15 +24,36 @@ class Candle:
 
 
 class RateLimiter:
-    def __init__(self, per_minute: int):
-        self.interval = 60.0 / max(1, per_minute)
+    """Paces calls at `per_minute`, and adapts: every 429 cuts the rate by 30% (floor `min_per_minute`),
+    every 20 accepted calls in a row raises it 10% (ceiling: the configured rate). The real budget
+    depends on the egress IP, which may be shared, so it has to be discovered, not assumed."""
+
+    def __init__(self, per_minute: int, min_per_minute: float = 3.0):
+        self.max_rpm = float(max(1, per_minute))
+        self.min_rpm = min(min_per_minute, self.max_rpm)
+        self.rpm = self.max_rpm
         self._next = 0.0
+        self._streak = 0
+
+    @property
+    def interval(self) -> float:
+        return 60.0 / self.rpm
 
     async def wait(self) -> None:
         now = time.monotonic()
         if now < self._next:
             await asyncio.sleep(self._next - now)
         self._next = max(now, self._next) + self.interval
+
+    def rejected(self) -> None:
+        self._streak = 0
+        self.rpm = max(self.min_rpm, self.rpm * 0.7)
+
+    def accepted(self) -> None:
+        self._streak += 1
+        if self._streak >= 20:
+            self._streak = 0
+            self.rpm = min(self.max_rpm, self.rpm * 1.1)
 
 
 def pick_pool(pools: list[dict[str, Any]]) -> str | None:
@@ -58,11 +79,14 @@ def pick_pool(pools: list[dict[str, Any]]) -> str | None:
 
 
 class GeckoTerminal:
-    def __init__(self, client: httpx.AsyncClient, base_url: str, rpm: int = 25):
+    def __init__(self, client: httpx.AsyncClient, base_url: str, rpm: int = 25, candle_minutes: int = 5):
         self.c = client
         self.base = base_url.rstrip("/")
         self.rl = RateLimiter(rpm)
-        self.stats = {"calls": 0, "rate_limited": 0, "not_found": 0, "errors": 0}
+        # 5-minute candles put a whole 24h window (288 candles) in one call; 1-minute needs two.
+        # Every entry delay and horizon we test is a multiple of 5 minutes, so nothing is lost.
+        self.candle_minutes = candle_minutes
+        self.stats = {"calls": 0, "rate_limited": 0, "not_found": 0, "errors": 0, "rpm_now": float(rpm)}
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """None only for a 404 (unknown pool/token). Persistent 429s raise, so the harvester
@@ -76,9 +100,12 @@ class GeckoTerminal:
             )
             if r.status_code == 404:
                 self.stats["not_found"] += 1
+                self.rl.accepted()
                 return None
             if r.status_code == 429:
                 self.stats["rate_limited"] += 1
+                self.rl.rejected()
+                self.stats["rpm_now"] = round(self.rl.rpm, 1)
                 retry_after = r.headers.get("retry-after") if hasattr(r, "headers") else None
                 try:
                     wait = float(retry_after) if retry_after else 5.0 * 2**attempt
@@ -89,6 +116,8 @@ class GeckoTerminal:
             if r.status_code >= 400:
                 self.stats["errors"] += 1
             r.raise_for_status()
+            self.rl.accepted()
+            self.stats["rpm_now"] = round(self.rl.rpm, 1)
             return r.json()
         assert r is not None
         self.stats["errors"] += 1
@@ -119,11 +148,17 @@ class GeckoTerminal:
         return pick_pool(await self.token_pools(mint))
 
     async def ohlcv_minute(
-        self, pool: str, before_ts: int, limit: int = 1000, network: str = "solana"
+        self,
+        pool: str,
+        before_ts: int,
+        limit: int = 1000,
+        network: str = "solana",
+        aggregate: int | None = None,
     ) -> list[Candle]:
+        agg = aggregate or self.candle_minutes
         data = await self._get(
             f"/networks/{network}/pools/{pool}/ohlcv/minute",
-            {"aggregate": 1, "limit": limit, "before_timestamp": before_ts, "currency": "usd"},
+            {"aggregate": agg, "limit": limit, "before_timestamp": before_ts, "currency": "usd"},
         )
         rows = ((data or {}).get("data", {}).get("attributes", {}) or {}).get("ohlcv_list", [])
         out = [
@@ -137,8 +172,8 @@ class GeckoTerminal:
     async def candles_between(self, pool: str, start_ts: int, end_ts: int) -> list[Candle]:
         """All minute candles in [start_ts, end_ts], paging backwards (API returns newest first)."""
         seen: dict[int, Candle] = {}
-        before = end_ts + 60
-        for _ in range(6):  # 6 x 1000 min > 4 days; plenty for a 25h window
+        before = end_ts + 60 * self.candle_minutes
+        for _ in range(6):  # 6 x 1000 candles; plenty for a 25h window at any supported resolution
             page = await self.ohlcv_minute(pool, before)
             if not page:
                 break

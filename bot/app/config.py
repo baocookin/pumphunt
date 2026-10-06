@@ -63,7 +63,8 @@ class Settings(BaseSettings):
 
     # --- harvester: post-migration candles from GeckoTerminal (free, ~30 req/min) ---
     gecko_base_url: str = "https://api.geckoterminal.com/api/v2"
-    gecko_rpm: int = 20  # documented 30/min per IP; the egress IP may be shared, keep headroom
+    gecko_rpm: int = 20  # ceiling; the limiter adapts downward on 429s (the egress IP may be shared)
+    gecko_candle_minutes: int = 5  # one call per 24h window; every tested delay/horizon is a multiple of 5
     harvest_after_s: float = 25 * 3600  # wait until the 24h window is fully observable
     # ~3 Gecko calls per row at gecko_rpm -> about 8 rows/min; the batch just bounds one cycle.
     harvest_interval_s: float = 240
