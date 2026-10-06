@@ -6,6 +6,7 @@ import pytest
 from helpers import PK_A, PK_B, fake_migrate_tx, fake_pubkey
 
 from app.anchor import PUMP_PROGRAM, ChainEvent
+from app.chain_feed import ChainNotification
 from app.config import Settings
 from app.events import Event
 from app.gecko import Candle
@@ -120,6 +121,7 @@ def test_counters_registry_and_compact_trade_log(rec):
     rec.on_chain(mig(t + 1))  # duplicate mint ignored
     assert rec.store.counters("creates_chain", [hour_key(t)]) == {hour_key(t): 1}
     assert rec.store.migration_count() == 1
+    assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}  # mint counted once
     assert rec.counts["migrate"] == 2 and rec.counts["trade"] == 1
     assert len(list(read_jsonl(rec.cfg.data_dir + "/migrations.jsonl"))) == 2  # every sighting is logged
     rows = list(read_jsonl(rec.chain_log.path_for(t)))
@@ -133,11 +135,13 @@ def test_portal_migration_then_chain_fills_pool(rec):
     rec.on_portal(portal_mig(t))  # no running loop: RPC confirmation is skipped silently
     row = rec.store.migrations()[0]
     assert row["pool"] is None and row["source"] == "portal"
+    assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 0}
     rec.on_chain(mig(t + 2))
     row = rec.store.migrations()[0]
     assert row["pool"] == "P1" and row["slot"] == 100 and row["source"] == "chain"
     assert row["ts"] == t  # first sighting keeps its timestamp
     assert rec.store.migration_count() == 1
+    assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}
 
 
 def test_rpc_confirmation_fills_pool_and_learns_authority(rec):
@@ -151,6 +155,7 @@ def test_rpc_confirmation_fills_pool_and_learns_authority(rec):
     assert row["sol_amount"] == 85.0 and row["ts"] == t
     assert rec.rpc_stats["confirmed"] == 1 and rec.rpc_stats["withdraw_authority"] == WA
     assert rec.rpc_stats["via"] == {"log": 1, "cpi": 0, "accounts": 0}
+    assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}
     # configured guess was wrong and the feed is silent -> re-subscribe to the learned address
     assert rec.learned_authority == WA and rec.feed.mentions == [WA]
     assert rec.store.counters("migrations_rpc", [hour_key(t)]) == {hour_key(t): 1}
@@ -193,6 +198,56 @@ def test_rpc_confirmation_survives_truncated_logs(rec):
     assert row["mint"] == acc["base_mint"] and row["pool"] == acc["pool"]
     assert row["slot"] == 9 and row["source"] == "rpc" and row.get("sol_amount") is None
     assert rec.rpc_stats["via"]["accounts"] == 1 and rec.learned_authority == WA
+
+
+def notif(sig, mention, ts=1_700_000_000.0, kinds=(), err=None):
+    return ChainNotification(ts=ts, slot=1, signature=sig, mention=mention, err=err, kinds=list(kinds))
+
+
+def test_websocket_notification_without_event_is_confirmed_once(rec):
+    t = 1_700_000_000.0
+    tx = fake_migrate_tx(PK_A, PK_B, WA, slot=11)
+    tx["meta"]["logMessages"] = ["Log truncated"]
+    acc = find_migrate_ix(tx)
+    rec.rpc = FakeRpc({"sigW": tx})
+    rec.feed = FakeFeed(notifications=3)
+
+    async def run():
+        auth = rec.cfg.migration_authority
+        rec.on_notification(notif("sigW", auth, t))
+        rec.on_notification(notif("sigW", auth, t))  # same tx again: no second fetch
+        rec.on_portal(portal_mig(t + 1, mint=acc["base_mint"], signature="sigW"))  # nor from PumpPortal
+        await asyncio.gather(*rec._tasks)
+
+    asyncio.run(run())
+    assert rec.rpc.calls == 1
+    assert rec.rpc_stats["triggered"] == {"portal": 0, "chain": 1} and rec.rpc_stats["confirmed"] == 1
+    row = rec.store.migrations()[0]
+    assert row["pool"] == acc["pool"] and row["slot"] == 11 and row["source"] == "rpc"
+    assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}
+    assert rec.store.counters("migrations_portal", [hour_key(t)]) == {hour_key(t): 1}
+
+
+def test_websocket_notification_is_ignored_when_not_worth_fetching(rec):
+    rec.rpc = FakeRpc({})
+    rec.feed = FakeFeed()
+
+    async def run():
+        auth = rec.cfg.migration_authority
+        rec.on_notification(notif("s1", auth, err={"InstructionError": [0, "x"]}))  # failed tx
+        rec.on_notification(notif("s2", auth, kinds=["migrate"]))  # already decoded from the logs
+        rec.on_notification(notif("s3", PUMP_PROGRAM))  # program-wide firehose subscription
+        rec.on_notification(notif("s4", None))  # unknown subscription
+        await asyncio.gather(*rec._tasks)
+
+    asyncio.run(run())
+    assert rec.rpc.calls == 0 and rec.rpc_stats["triggered"] == {"portal": 0, "chain": 0}
+    # a migrate decoded from the logs claims its signature, so PumpPortal does not re-fetch it
+    t = 1_700_000_000.0
+    rec.on_chain(mig(t, mint="MX", pool="PX"))
+    ev = ChainEvent(t, 1, "s2", "migrate", mig(t).data)
+    rec.on_chain(ev)
+    assert rec._claim("s2") is False and rec._claim("s") is False
 
 
 def test_rpc_confirmation_records_why_a_tx_is_not_a_migration(rec):

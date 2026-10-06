@@ -57,7 +57,8 @@ def stats():
     hours = _last_hours(24)
     chain = store.counters("creates_chain", hours)
     portal = store.counters("creates_portal", hours)
-    mig = store.counters("migrations_chain", hours)
+    # Mints whose pool is known from chain (websocket event or getTransaction), each counted once.
+    mig = store.counters("migrations_confirmed", hours)
     mig_portal = store.counters("migrations_portal", hours)
     chain_total, portal_total = sum(chain.values()), sum(portal.values())
     full = settings.chain_scope == "full"

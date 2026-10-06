@@ -34,7 +34,7 @@ def _merge_pool(existing: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]
 class Store(Protocol):
     def incr(self, name: str, hour: str, n: int = 1) -> None: ...
     def counters(self, name: str, hours: list[str]) -> dict[str, int]: ...
-    def add_migration(self, row: dict[str, Any]) -> bool: ...
+    def add_migration(self, row: dict[str, Any]) -> str: ...
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]: ...
     def migration_count(self) -> int: ...
     def pending_harvest(self, before_ts: float, limit: int) -> list[dict[str, Any]]: ...
@@ -59,16 +59,17 @@ class MemoryStore:
         c = self._counters.get(name, {})
         return {h: c.get(h, 0) for h in hours}
 
-    def add_migration(self, row: dict[str, Any]) -> bool:
-        """True if the mint is new. An existing row without a pool gets the pool filled in."""
+    def add_migration(self, row: dict[str, Any]) -> str:
+        """ "new" for an unseen mint, "filled" when this row supplies the missing pool, else "dup"."""
         existing = self._migrations.get(row["mint"])
         if existing is None:
             self._migrations[row["mint"]] = dict(row, harvested=False)
-            return True
+            return "new"
         merged = _merge_pool(existing, row)
-        if merged is not None:
-            self._migrations[row["mint"]] = merged
-        return False
+        if merged is None:
+            return "dup"
+        self._migrations[row["mint"]] = merged
+        return "filled"
 
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = sorted(self._migrations.values(), key=lambda r: r["ts"], reverse=True)
@@ -120,16 +121,17 @@ class RedisStore:
         vals = self.r.hmget(self._ck(name), hours)
         return {h: int(v or 0) for h, v in zip(hours, vals, strict=True)}
 
-    def add_migration(self, row: dict[str, Any]) -> bool:
+    def add_migration(self, row: dict[str, Any]) -> str:
         new = dict(row, harvested=False)
         if self.r.hsetnx(self.K_MIG, row["mint"], json.dumps(new)):
             self.r.zadd(self.K_PENDING, {row["mint"]: row["ts"]})
-            return True
+            return "new"
         raw = self.r.hget(self.K_MIG, row["mint"])
         merged = _merge_pool(json.loads(raw), row) if raw else None
-        if merged is not None:
-            self.r.hset(self.K_MIG, row["mint"], json.dumps(merged))
-        return False
+        if merged is None:
+            return "dup"
+        self.r.hset(self.K_MIG, row["mint"], json.dumps(merged))
+        return "filled"
 
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = [json.loads(v) for v in self.r.hvals(self.K_MIG)]

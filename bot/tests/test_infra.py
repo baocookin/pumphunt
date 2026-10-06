@@ -2,6 +2,9 @@
 
 import json
 
+from helpers import PK_A, PK_B, migrate_event_log
+
+from app.anchor import PUMP_PROGRAM
 from app.chain_feed import SolanaLogsFeed
 from app.gecko import pick_pool
 from app.jsonl import JsonlWriter, read_jsonl
@@ -52,6 +55,46 @@ def test_logs_feed_one_subscription_per_address():
     assert [m["id"] for m in msgs] == [1, 2]
     assert [m["params"][0]["mentions"] for m in msgs] == [["ADDR1"], ["ADDR2"]]
     assert all(m["params"][1]["commitment"] == "processed" for m in msgs)
+
+
+def _notification(sub, sig, logs, slot=5, err=None):
+    return {
+        "jsonrpc": "2.0",
+        "method": "logsNotification",
+        "params": {
+            "subscription": sub,
+            "result": {"context": {"slot": slot}, "value": {"signature": sig, "err": err, "logs": logs}},
+        },
+    }
+
+
+def test_logs_feed_reports_every_notification_with_its_subscription():
+    feed = SolanaLogsFeed("wss://x", ["AUTH", "PROG"])
+    seen = []
+    feed.on_notification = seen.append
+    assert feed._on_message({"id": 1, "result": 77}, 1.0) == []
+    assert feed._on_message({"id": 2, "result": 78}, 1.0) == []
+    # logs cut off before the event: no ChainEvent, but the recorder still hears about it
+    cut = [f"Program {PUMP_PROGRAM} invoke [1]", "Log truncated"]
+    assert feed._on_message(_notification(77, "sigA", cut, slot=9), 2.0) == []
+    n = seen[-1]
+    assert (n.signature, n.mention, n.slot, n.kinds, n.logs_truncated, n.err) == (
+        "sigA",
+        "AUTH",
+        9,
+        [],
+        True,
+        None,
+    )
+    # full logs: the event decodes and the notification says so
+    evs = feed._on_message(_notification(78, "sigB", [migrate_event_log(PK_A, PK_B)]), 3.0)
+    assert (
+        [e.kind for e in evs] == ["migrate"] and seen[-1].kinds == ["migrate"] and seen[-1].mention == "PROG"
+    )
+    assert feed.stats["notifications"] == 2 and feed.stats["events"] == 1
+    # a failed tx is reported with its error and never decoded
+    assert feed._on_message(_notification(77, "sigC", cut, err={"InstructionError": [0, "x"]}), 4.0) == []
+    assert seen[-1].err and seen[-1].kinds == []
 
 
 def test_api_routes_under_prefix(monkeypatch, tmp_path):

@@ -5,6 +5,9 @@ Files under data_dir:
                            (trades compact unless record_raw_trades), with slot + signature
   portal-YYYY-MM-DD.jsonl  every PumpPortal message
   migrations.jsonl         one line per graduation sighting (portal, rpc-confirmed, chain)
+
+Counters per hour: migrations_confirmed counts each mint once, the first time a pool is
+known from chain (websocket event, or getTransaction triggered by either feed).
   survivor.jsonl           one line per harvested token (hypothesis C metrics)
 """
 
@@ -16,7 +19,7 @@ from typing import Any
 import httpx
 
 from .anchor import PUMP_PROGRAM, ChainEvent
-from .chain_feed import SolanaLogsFeed
+from .chain_feed import ChainNotification, SolanaLogsFeed
 from .config import Settings
 from .events import Event
 from .feed import PumpPortalFeed
@@ -69,18 +72,30 @@ class Recorder:
             "no_event": 0,
             "last_rpc_ts": 0.0,
             "via": {"log": 0, "cpi": 0, "accounts": 0},
+            "triggered": {"portal": 0, "chain": 0},
             "last_no_event": None,
             "withdraw_authority": None,
             "authority_static": None,
             "migrate_ix": None,
         }
         self._tasks: set[asyncio.Task] = set()
+        self._claimed: dict[str, None] = {}  # signatures already handled by some path (ordered set)
 
     def mentions(self) -> list[str]:
         out = [self.learned_authority or self.cfg.migration_authority]
         if self.cfg.chain_scope == "full":
             out.append(PUMP_PROGRAM)
         return out
+
+    def _claim(self, signature: str) -> bool:
+        """True the first time a signature is seen. Both feeds and the log decoder check here,
+        so one migration costs at most one getTransaction."""
+        if not signature or signature in self._claimed:
+            return False
+        self._claimed[signature] = None
+        while len(self._claimed) > 20_000:
+            del self._claimed[next(iter(self._claimed))]
+        return True
 
     def _spawn(self, coro) -> None:
         """Run a coroutine in the background when a loop is running (no-op in sync tests)."""
@@ -111,10 +126,34 @@ class Recorder:
             self.store.incr("completes_chain", hour)
         elif ev.kind == "migrate":
             self.store.incr("migrations_chain", hour)
+            self._claim(ev.signature)  # decoded from the logs: no need to fetch this tx
             row = self._migration_row(ev.data, ev.ts, ev.slot, ev.signature, "chain")
             if row["mint"] and row["pool"]:
-                self.store.add_migration(row)
-                self.migrations.write(row)
+                self._register(row, hour)
+
+    def _register(self, row: dict[str, Any], hour: str) -> str:
+        """Record a sighting that carries the pool; count the mint as confirmed the first time."""
+        status = self.store.add_migration(row)
+        self.migrations.write(row)
+        if status != "dup":
+            self.store.incr("migrations_confirmed", hour)
+        return status
+
+    def on_notification(self, n: ChainNotification) -> None:
+        """Websocket saw a tx of the authority but its logs held no migrate event.
+
+        Almost always the event was cut off with the logs (10 KB cap), so confirm it by
+        signature exactly like a PumpPortal sighting. Only for the authority subscription:
+        the program-wide one in "full" scope is far too busy to fetch.
+        """
+        if n.err or "migrate" in n.kinds or self.rpc is None:
+            return
+        if n.mention != (self.learned_authority or self.cfg.migration_authority):
+            return
+        if not self._claim(n.signature):
+            return
+        self.rpc_stats["triggered"]["chain"] += 1
+        self._spawn(self.confirm_migration(n.signature, n.ts, delays=(0, 3, 10)))
 
     @staticmethod
     def _migration_row(
@@ -136,6 +175,7 @@ class Recorder:
 
     async def run_chain(self) -> None:
         self.feed = SolanaLogsFeed(self.cfg.solana_ws_url, self.mentions(), self.cfg.chain_commitment)
+        self.feed.on_notification = self.on_notification
         print(
             f"[chain] logsSubscribe {self.cfg.solana_ws_url} scope={self.cfg.chain_scope} {self.mentions()}"
         )
@@ -163,9 +203,10 @@ class Recorder:
                 "signature": ev.signature,
                 "source": "portal",
             }
-            if self.store.add_migration(row):
+            if self.store.add_migration(row) == "new":
                 self.migrations.write(row)
-            if self.rpc is not None and ev.signature:
+            if self.rpc is not None and self._claim(ev.signature):
+                self.rpc_stats["triggered"]["portal"] += 1
                 self._spawn(self.confirm_migration(ev.signature, ev.ts))
 
     async def run_portal(self) -> None:
@@ -202,8 +243,7 @@ class Recorder:
             return False
         row = self._migration_row(info["event"], seen_ts, info["slot"], signature, "rpc")
         if row["mint"] and row["pool"]:
-            self.store.add_migration(row)
-            self.migrations.write(row)
+            self._register(row, hour_key(seen_ts))
             self.store.incr("migrations_rpc", hour_key(seen_ts))
         self.rpc_stats["confirmed"] += 1
         self.rpc_stats["last_rpc_ts"] = time.time()

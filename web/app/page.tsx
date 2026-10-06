@@ -8,7 +8,7 @@ const API = `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api`;
 type ChainFeed = { connected?: boolean; connects?: number; subscribed?: number; notifications?: number; events?: number; last_error?: string | null; mentions?: string[] };
 type NoEvent = { signature?: string; found?: boolean; log_truncated?: boolean; pump_ixs?: { name?: string | null; disc: string; inner: boolean }[]; events?: { kind: string; via: string }[] };
 type Rpc = {
-  confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; via?: Record<string, number>; last_no_event?: NoEvent | null;
+  confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; via?: Record<string, number>; triggered?: Record<string, number>; last_no_event?: NoEvent | null;
   withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null;
 };
 type Stats = {
@@ -92,7 +92,7 @@ export default function Page() {
 
       <div className="tiles">
         <div className="tile"><div className="k">Token tạo mới / 24h {full ? "(on‑chain)" : "(PumpPortal)"}</div><div className="v">{stats?.creates_24h ?? "–"}</div></div>
-        <div className="tile"><div className="k">Graduation / 24h (on‑chain)</div><div className="v">{stats?.migrations_24h ?? "–"} <span className="k">/ {stats?.migrations_total ?? 0} tổng</span></div></div>
+        <div className="tile"><div className="k">Graduation / 24h (xác nhận on‑chain)</div><div className="v">{stats?.migrations_24h ?? "–"} <span className="k">/ {stats?.migrations_total ?? 0} tổng</span></div></div>
         <div className="tile"><div className="k">Graduation / 24h (PumpPortal)</div><div className="v">{stats?.migrations_24h_portal ?? "–"}</div></div>
         <div className="tile"><div className="k">Đã harvest nến</div><div className="v">{sum?.harvested ?? 0} <span className="k">alive 24h {pct(sum?.alive_24h_rate, 0)}</span></div></div>
         <div className={`tile verdict ${verdict.toLowerCase()}`}><div className="k">Giả thuyết C (T+30m → 1h)</div><div className="v">{verdict}</div><div className="k">{sum?.verdict.why}</div></div>
@@ -103,8 +103,9 @@ export default function Page() {
         <div className="tile"><div className="k">WebSocket</div><div className="v">{feed ? (feed.connected ? "connected" : "down") : "–"} <span className="k">· {feed?.connects ?? 0} lần nối · {feed?.subscribed ?? 0} sub</span></div><div className="k mono">{feed?.last_error ?? ""}</div></div>
         <div className="tile"><div className="k">Notification / event decode</div><div className="v">{feed?.notifications ?? 0} <span className="k">/ {feed?.events ?? 0}</span></div></div>
         <div className="tile">
-          <div className="k">RPC confirm (portal → getTransaction)</div>
+          <div className="k">RPC confirm (getTransaction)</div>
           <div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event</span></div>
+          <div className="k">{rpc?.triggered ? `kích hoạt bởi websocket ${rpc.triggered.chain ?? 0} · pumpportal ${rpc.triggered.portal ?? 0}` : ""}</div>
           <div className="k">{rpc?.via ? `nhận qua log ${rpc.via.log ?? 0} · cpi ${rpc.via.cpi ?? 0} · accounts ${rpc.via.accounts ?? 0}` : ""}</div>
           {rpc?.last_no_event?.signature && (
             <div className="k mono">
