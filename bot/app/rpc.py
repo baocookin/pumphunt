@@ -15,7 +15,9 @@ Three places can carry the migration, and a real transaction may only have some:
   3. The migrate instruction's own accounts, which name the mint and the pool.
 """
 
+import asyncio
 import base64
+import time
 from typing import Any
 
 import httpx
@@ -79,6 +81,7 @@ _MIGRATE_V2_ACCOUNTS = [
     "event_authority",
     "program",
 ]
+PUMP_AMM = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"  # a real migrate creates the pool here via CPI
 MIGRATE_IX: dict[bytes, tuple[str, list[str]]] = {
     bytes([155, 234, 231, 146, 236, 158, 162, 30]): ("migrate", _MIGRATE_ACCOUNTS),
     bytes([187, 203, 18, 31, 206, 237, 254, 41]): ("migrate_v2", _MIGRATE_V2_ACCOUNTS),
@@ -103,12 +106,36 @@ def describe_http_error(exc: httpx.HTTPError) -> str:
 
 
 class SolanaRpc:
-    def __init__(self, client: httpx.AsyncClient, url: str):
+    """JSON-RPC client with a global pace: at most `rps` request starts per second across all
+    callers, and a 429 pushes every caller back by `penalty_s`. Helius' free tier allows ~10/s;
+    a backfill of a few hundred getTransaction calls must not trip it."""
+
+    def __init__(self, client: httpx.AsyncClient, url: str, rps: float = 5.0, penalty_s: float = 2.0):
         self.c = client
         self.url = url
+        self.interval = 1.0 / rps if rps > 0 else 0.0
+        self.penalty_s = penalty_s
+        self._next = 0.0
+        self._lock = asyncio.Lock()
+        self.stats = {"calls": 0, "rate_limited": 0, "errors": 0}
+
+    async def _pace(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            wait = self._next - now
+            self._next = max(now, self._next) + self.interval
+        if wait > 0:
+            await asyncio.sleep(wait)
 
     async def _call(self, method: str, params: list[Any]) -> Any:
+        await self._pace()
+        self.stats["calls"] += 1
         r = await self.c.post(self.url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        if r.status_code == 429:
+            self.stats["rate_limited"] += 1
+            self._next = max(self._next, time.monotonic() + self.penalty_s)
+        if r.status_code >= 400:
+            self.stats["errors"] += 1
         r.raise_for_status()
         return r.json().get("result")
 
@@ -201,12 +228,21 @@ def events_from_tx(tx: dict[str, Any]) -> list[dict[str, Any]]:
     return events
 
 
+def creates_pool(tx: dict[str, Any]) -> bool:
+    """True when the tx CPIs into PumpSwap: a migrate that did the work. Bots lose the migrate race
+    all day long; their `migrate_v2` still succeeds, logs "Bonding curve already migrated" and
+    returns without touching anything."""
+    keys, _ = account_keys(tx)
+    return any(inner and _program_of(ix, keys) == PUMP_AMM for ix, inner in _instructions(tx))
+
+
 def migration_from_tx(tx: dict[str, Any] | None) -> dict[str, Any] | None:
     """Migrate event + slot + instruction accounts, or None if this is not a successful migrate tx.
 
     Prefers the decoded event (log or CPI copy). When both copies are missing but the
-    migrate instruction is there, the mint and pool are taken from its accounts
-    (`via: accounts`); that is all the recorder needs to register the graduation.
+    migrate instruction is there and the pool was created in this tx, the mint and pool
+    are taken from the instruction's accounts (`via: accounts`). A migrate instruction that
+    created nothing is a no-op race loser: `{"noop": True, ...}` so callers can count it.
     """
     if not tx or (tx.get("meta") or {}).get("err"):
         return None
@@ -216,6 +252,8 @@ def migration_from_tx(tx: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     if ev is None:
         assert accounts is not None
+        if not creates_pool(tx):
+            return {"noop": True, "event": None, "slot": tx.get("slot"), "accounts": accounts}
         ev = {
             "kind": "migrate",
             "via": "accounts",
@@ -267,6 +305,8 @@ def tx_diagnostics(tx: dict[str, Any] | None) -> dict[str, Any]:
         "n_static": n_static,
         "n_logs": len(logs),
         "log_truncated": any("Log truncated" in line for line in logs),
+        "already_migrated_log": any("already migrated" in line for line in logs),
+        "creates_pool": creates_pool(tx),
         "log_event_discs": log_discs,
         "programs": sorted({i["program"] for i in ixs if i["program"]}),
         "pump_ixs": [i for i in ixs if i["program"] == PUMP_PROGRAM][:20],

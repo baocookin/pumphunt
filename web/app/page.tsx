@@ -12,6 +12,8 @@ type Rpc = {
   confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; via?: Record<string, number>; triggered?: Record<string, number>; last_no_event?: NoEvent | null;
   withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null;
   migrate_users?: Record<string, number>; migrate_user_static?: boolean | null; portal_mislabeled?: number;
+  noop?: number; retry_pending?: number; failed_final?: number; last_failed?: { signature?: string; error?: string } | null;
+  transport?: { calls?: number; rate_limited?: number; errors?: number } | null;
   poller?: { polls?: number; listed?: number; skipped_failed?: number; cursor?: string | null; last_poll_ts?: number; last_error?: string | null; backfill_from?: number | null };
 };
 type Stats = {
@@ -119,7 +121,8 @@ export default function Page() {
         </div>
         <div className="tile">
           <div className="k">RPC confirm (getTransaction)</div>
-          <div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event</span></div>
+          <div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event · {rpc?.noop ?? 0} no‑op (bot thua cuộc)</span></div>
+          <div className="k">{`đang chờ thử lại ${rpc?.retry_pending ?? 0} · bỏ cuộc ${rpc?.failed_final ?? 0} · RPC ${rpc?.transport?.calls ?? 0} call, ${rpc?.transport?.rate_limited ?? 0} lần 429`}{rpc?.last_failed?.signature ? ` · lỗi gần nhất ${short(rpc.last_failed.signature)}: ${rpc.last_failed.error}` : ""}</div>
           <div className="k">{rpc?.triggered ? `kích hoạt bởi poller ${rpc.triggered.poller ?? 0} · websocket ${rpc.triggered.chain ?? 0} · pumpportal ${rpc.triggered.portal ?? 0}` : ""}</div>
           <div className="k">{rpc?.via ? `nhận qua log ${rpc.via.log ?? 0} · cpi ${rpc.via.cpi ?? 0} · accounts ${rpc.via.accounts ?? 0}` : ""}</div>
           {rpc?.last_no_event?.signature && (

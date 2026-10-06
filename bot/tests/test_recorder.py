@@ -81,7 +81,9 @@ def rec(tmp_path):
         entry_delays_min=[0, 30],
         horizons_min=[60],
     )
-    return Recorder(cfg, MemoryStore())
+    r = Recorder(cfg, MemoryStore())
+    r.portal_delays = r.chain_delays = r.poll_delays = (0,)
+    return r
 
 
 def mig(ts, mint="M1", pool="P1"):
@@ -340,6 +342,76 @@ def test_poller_confirms_new_signatures_once_and_keeps_a_cursor(rec):
     assert asyncio.run(rec.poll_once(now=now + 30)) == 0
     assert rec.rpc.sig_calls[-1] == (rec.cfg.migration_authority, 1000, None, "sA")
     assert rec.rpc.calls == 2 and rec.rpc_stats["poller"]["cursor"] == "sA"
+
+
+def test_failed_fetches_are_retried_on_later_polls_until_they_give_up(rec):
+    now = 1_700_000_000.0
+    tx = fake_migrate_tx(PK_A, PK_B, WA, slot=5)
+    rec.feed = FakeFeed()
+    rec.cfg.retry_max_attempts = 3
+    rec.rpc = FakeRpc({}, signatures=[sig("sR", now - 10)])
+
+    async def run():
+        assert await rec.poll_once(now=now) == 1  # listed and fetched: the RPC has nothing yet
+        await asyncio.gather(*rec._tasks)
+        assert rec.rpc_stats["failed"] == 1 and rec.rpc_stats["retry_pending"] == 1
+        assert rec.rpc_stats["last_failed"] == {"signature": "sR", "error": "not found"}
+        rec.rpc.txs["sR"] = tx  # the tx shows up before the next poll
+        assert await rec.poll_once(now=now + 30) == 1  # nothing new listed, one retry re-queued
+        await asyncio.gather(*rec._tasks)
+
+    asyncio.run(run())
+    assert rec.rpc_stats["confirmed"] == 1 and rec.rpc_stats["retry_pending"] == 0
+    assert rec.store.migrations()[0]["pool"] == PK_B and rec.store.migrations()[0]["ts"] == now - 10
+    # a signature that never resolves is dropped after retry_max_attempts rounds
+    rec.rpc = FakeRpc({}, signatures=[sig("sDead", now - 5)])
+
+    async def exhaust():
+        for i in range(4):
+            await rec.poll_once(now=now + 60 + 30 * i)
+            await asyncio.gather(*rec._tasks)
+
+    asyncio.run(exhaust())
+    assert rec.rpc_stats["failed_final"] == 1 and rec.rpc_stats["retry_pending"] == 0
+    assert rec.rpc.calls == 3  # 3 rounds, one attempt each with poll_delays=(0,)
+
+
+def test_noop_migrates_and_enrichment(rec):
+    t = 1_700_000_000.0
+    acc_only = fake_migrate_tx(PK_A, PK_B, WA, slot=8)
+    acc_only["meta"]["logMessages"] = ["Log truncated"]  # pool CPI present, event lost: accounts path
+    acc = find_migrate_ix(acc_only)
+    # on chain the event names the same mint/pool as the instruction accounts; mirror that here
+    real = fake_migrate_tx(acc["base_mint"], acc["pool"], WA, slot=9)
+    noop = fake_migrate_tx(acc["base_mint"], acc["pool"], WA, slot=10)
+    noop["meta"]["logMessages"] = ["Program log: Bonding curve already migrated"]
+    noop["meta"]["innerInstructions"] = []
+    rec.feed = FakeFeed(notifications=1)
+    rec.rpc = FakeRpc({"sN": noop, "sAcc": acc_only, "sReal": real})
+
+    async def run():
+        assert await rec.confirm_migration("sN", t, delays=(0,)) is False
+        assert await rec.confirm_migration("sAcc", t + 1, delays=(0,)) is True
+        assert await rec.confirm_migration("sReal", t + 2, delays=(0,)) is True
+
+    asyncio.run(run())
+    assert rec.rpc_stats["noop"] == 1 and rec.rpc_stats["confirmed"] == 2 and rec.rpc_stats["no_event"] == 0
+    rows = rec.store.migrations()
+    assert len(rows) == 1 and rows[0]["mint"] == acc["base_mint"]
+    # the accounts-only row got the event's amounts from the real tx, and was counted once
+    assert rows[0]["sol_amount"] == 85.0 and rows[0]["slot"] == 9 and rows[0]["ts"] == t + 1
+    assert rec.store.counters("migrations_confirmed", [hour_key(t)]) == {hour_key(t): 1}
+
+
+def test_first_poll_of_a_process_walks_back_even_with_a_stored_cursor(rec):
+    now = 1_700_000_000.0
+    rec.store.set_kv("poller_cursor", "sOld")  # left by a previous run
+    rec.feed = FakeFeed()
+    rec.rpc = FakeRpc({}, signatures=[sig("sNew", now - 5), sig("sOld", now - 50), sig("sOlder", now - 90)])
+    assert asyncio.run(rec.poll_once(now=now)) == 3  # listed everything in the window, not just past sOld
+    assert rec.rpc.sig_calls[0] == (rec.cfg.migration_authority, 1000, None, None)
+    assert asyncio.run(rec.poll_once(now=now + 30)) == 0
+    assert rec.rpc.sig_calls[-1][3] == "sNew"  # in-process cursor from here on
 
 
 def test_poller_cold_start_stays_inside_the_backfill_window(rec):

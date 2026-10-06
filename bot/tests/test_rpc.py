@@ -5,6 +5,7 @@ from helpers import PK_A, PK_B, disc_for, fake_migrate_tx, fake_pubkey, migrate_
 from app.anchor import PUMP_PROGRAM, b58encode
 from app.rpc import (
     EVENT_IX_TAG,
+    PUMP_AMM,
     account_keys,
     find_migrate_ix,
     http_url_from_ws,
@@ -16,6 +17,8 @@ WA = fake_pubkey(777)
 
 
 class _Resp:
+    status_code = 200
+
     def __init__(self, result):
         self._r = result
 
@@ -138,6 +141,72 @@ def test_mint_and_pool_from_instruction_accounts_when_event_is_lost():
     assert info["accounts"]["withdraw_authority"] == WA
 
 
+def test_migrate_that_created_nothing_is_a_noop_not_a_migration():
+    tx = fake_migrate_tx(PK_A, PK_B, WA)
+    tx["meta"]["logMessages"] = [
+        f"Program {PUMP_PROGRAM} invoke [1]",
+        "Program log: Instruction: MigrateV2",
+        "Program log: Bonding curve already migrated",
+        f"Program {PUMP_PROGRAM} success",
+    ]
+    tx["meta"]["innerInstructions"] = []
+    info = migration_from_tx(tx)
+    assert info["noop"] is True and info["event"] is None and info["accounts"]["ix"] == "migrate_v2"
+    d = tx_diagnostics(tx)
+    assert d["already_migrated_log"] is True and d["creates_pool"] is False
+    # a decoded event always wins, pool CPI or not (the event itself proves the migration)
+    tx2 = fake_migrate_tx(PK_A, PK_B, WA)
+    tx2["meta"]["innerInstructions"] = []
+    assert migration_from_tx(tx2)["event"]["via"] == "log"
+
+
+def test_rpc_client_paces_requests_and_backs_off_on_429():
+    import asyncio
+    import contextlib
+    import time
+
+    import httpx
+
+    from app.rpc import SolanaRpc
+
+    class Resp:
+        def __init__(self, status):
+            self.status_code = status
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                req = httpx.Request("POST", "https://rpc.example")
+                raise httpx.HTTPStatusError(
+                    "x", request=req, response=httpx.Response(self.status_code, request=req)
+                )
+
+        def json(self):
+            return {"result": {"ok": 1}}
+
+    class Client:
+        def __init__(self):
+            self.codes = [200, 200, 429, 200]
+
+        async def post(self, url, json):
+            return Resp(self.codes.pop(0))
+
+    async def run():
+        rpc = SolanaRpc(Client(), "https://rpc.example", rps=20, penalty_s=0.3)
+        t0 = time.monotonic()
+        await asyncio.gather(rpc.get_transaction("a"), rpc.get_transaction("b"))
+        spaced = time.monotonic() - t0
+        with contextlib.suppress(httpx.HTTPStatusError):
+            await rpc.get_transaction("c")
+        t1 = time.monotonic()
+        await rpc.get_transaction("d")
+        return spaced, time.monotonic() - t1, rpc.stats
+
+    spaced, after_429, stats = asyncio.run(run())
+    assert spaced >= 0.045  # second request waited for its slot at 20 rps
+    assert after_429 >= 0.25  # the 429 penalty held the next request back
+    assert stats == {"calls": 4, "rate_limited": 1, "errors": 1}
+
+
 def test_tx_diagnostics_names_what_is_there():
     assert tx_diagnostics(None) == {"found": False}
     tx = fake_migrate_tx(PK_A, PK_B, WA)
@@ -146,7 +215,7 @@ def test_tx_diagnostics_names_what_is_there():
     assert d["events"] == [{"kind": "migrate", "via": "log"}]
     assert d["log_event_discs"] == [disc_for("migrate").hex()]
     assert d["pump_ixs"][0]["name"] == "migrate_v2" and d["pump_ixs"][0]["inner"] is False
-    assert d["programs"] == [PUMP_PROGRAM] and d["n_static"] == d["n_keys"]
+    assert d["programs"] == sorted([PUMP_PROGRAM, PUMP_AMM]) and d["n_static"] == d["n_keys"]
     _truncate_logs(tx)
     d = tx_diagnostics(tx)
     assert d["log_truncated"] is True and d["events"] == [] and d["log_event_discs"] == []

@@ -19,26 +19,37 @@ def day_key(ts: float) -> str:
     return time.strftime("%Y-%m-%d", time.gmtime(ts))
 
 
-def _merge_pool(existing: dict[str, Any], row: dict[str, Any]) -> dict[str, Any] | None:
-    """A PumpPortal sighting arrives without the pool; the chain event fills it in later."""
-    if existing.get("pool") or not row.get("pool"):
-        return None
+_EVENT_FIELDS = (
+    "slot",
+    "signature",
+    "chain_ts",
+    "sol_amount",
+    "mint_amount",
+    "bonding_curve",
+    "user",
+    "quote_mint",
+)
+
+
+def _merge(existing: dict[str, Any], row: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """(merged row, status). "filled": a pool-less sighting (PumpPortal) gets the pool from chain.
+    "enriched": a row whose pool came from instruction accounts only gets the event's amounts.
+    (None, "dup"): nothing new."""
+    if not row.get("pool"):
+        return None, "dup"
+    if existing.get("pool"):
+        if existing.get("sol_amount") is not None or row.get("sol_amount") is None:
+            return None, "dup"
+        status = "enriched"
+    else:
+        status = "filled"
     merged = dict(existing)
-    for k in (
-        "pool",
-        "slot",
-        "signature",
-        "chain_ts",
-        "sol_amount",
-        "mint_amount",
-        "bonding_curve",
-        "user",
-        "quote_mint",
-    ):
+    merged["pool"] = row["pool"]
+    for k in _EVENT_FIELDS:
         if row.get(k) is not None:
             merged[k] = row[k]
     merged["source"] = row.get("source", merged.get("source"))
-    return merged
+    return merged, status
 
 
 class Store(Protocol):
@@ -74,16 +85,16 @@ class MemoryStore:
         return {h: c.get(h, 0) for h in hours}
 
     def add_migration(self, row: dict[str, Any]) -> str:
-        """ "new" for an unseen mint, "filled" when this row supplies the missing pool, else "dup"."""
+        """ "new" for an unseen mint, "filled" when this row supplies the missing pool,
+        "enriched" when it adds the event amounts to a pool-only row, else "dup"."""
         existing = self._migrations.get(row["mint"])
         if existing is None:
             self._migrations[row["mint"]] = dict(row, harvested=False)
             return "new"
-        merged = _merge_pool(existing, row)
-        if merged is None:
-            return "dup"
-        self._migrations[row["mint"]] = merged
-        return "filled"
+        merged, status = _merge(existing, row)
+        if merged is not None:
+            self._migrations[row["mint"]] = merged
+        return status
 
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = sorted(self._migrations.values(), key=lambda r: r["ts"], reverse=True)
@@ -161,11 +172,12 @@ class RedisStore:
             self.r.zadd(self.K_PENDING, {row["mint"]: row["ts"]})
             return "new"
         raw = self.r.hget(self.K_MIG, row["mint"])
-        merged = _merge_pool(json.loads(raw), row) if raw else None
-        if merged is None:
+        if not raw:
             return "dup"
-        self.r.hset(self.K_MIG, row["mint"], json.dumps(merged))
-        return "filled"
+        merged, status = _merge(json.loads(raw), row)
+        if merged is not None:
+            self.r.hset(self.K_MIG, row["mint"], json.dumps(merged))
+        return status
 
     def migrations(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = [json.loads(v) for v in self.r.hvals(self.K_MIG)]
