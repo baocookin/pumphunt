@@ -33,7 +33,8 @@ type Stats = {
   migrations_total: number;
   hourly: { hour: string; creates_chain: number; creates_portal: number; migrations: number; migrations_portal: number }[];
 };
-type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; harvested: boolean; source?: string };
+type Migration = { mint: string; pool: string | null; ts: number; slot: number | null; sol_amount?: number; quote_mint?: string | null; harvested: boolean; source?: string };
+const WSOL = "So11111111111111111111111111111111111111112";
 type Cell = { n: number; median?: number; win_rate?: number; top2pct_share?: number; p10?: number; p90?: number };
 type Harvest = { runs?: number; last_run_ts?: number; last_error?: string | null; rows_last_run?: number; with_data?: number; no_pool?: number; no_candles?: number; due?: number; pending?: number };
 type Gecko = { calls?: number; rate_limited?: number; not_found?: number; errors?: number };
@@ -165,7 +166,7 @@ export default function Page() {
         </div>
         <div className="tile">
           <div className="k">withdraw_authority ({rpc?.migrate_ix ?? "?"})</div>
-          <div className="v mono" style={{ fontSize: 13 }}>{rpc?.withdraw_authority ?? "chưa học"}</div>
+          <div className="v mono" style={{ fontSize: 13, wordBreak: "break-all" }}>{rpc?.withdraw_authority ?? "chưa học"}</div>
           <div className="k">{rpc?.authority_static === false ? "lần gần nhất nạp qua lookup table, websocket không thấy tx đó" : ""}</div>
           <div className="k">{signer ? `ký migrate nhiều nhất: ${short(signer[0])} (${signer[1]}/${signerTotal})${mentions.includes(signer[0]) ? ", đã subscribe" : ""}` : ""}</div>
           <div className="k">đang subscribe: {mentions.map(short).join(", ")}</div>
@@ -198,7 +199,7 @@ export default function Page() {
 
       <h2>Graduation gần đây</h2>
       <table>
-        <thead><tr><th>Lúc</th><th>Mint</th><th>Pool</th><th>Slot</th><th>SOL vào pool</th><th>Nguồn</th><th>Harvest</th></tr></thead>
+        <thead><tr><th>Lúc</th><th>Mint</th><th>Pool</th><th>Slot</th><th>Vốn vào pool (SOL, hoặc quote khác)</th><th>Nguồn</th><th>Harvest</th></tr></thead>
         <tbody>
           {migs.length === 0 && <tr><td colSpan={7} className="empty">Chưa ghi được migration nào</td></tr>}
           {migs.map((m) => (
@@ -207,7 +208,7 @@ export default function Page() {
               <td className="mono"><a href={`https://solscan.io/token/${m.mint}`} target="_blank" rel="noreferrer">{short(m.mint)}</a></td>
               <td className="mono">{m.pool ? short(m.pool) : <span className="k">chưa rõ</span>}</td>
               <td>{m.slot ?? "–"}</td>
-              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? m.sol_amount.toFixed(2) : "–"}</td>
+              <td>{m.sol_amount !== undefined && m.sol_amount !== null ? `${m.sol_amount.toFixed(2)}${m.quote_mint && m.quote_mint !== WSOL ? ` ${short(m.quote_mint)}` : ""}` : "–"}</td>
               <td>{m.source ?? "–"}</td>
               <td>{m.harvested ? "✓" : "chờ 25h"}</td>
             </tr>
