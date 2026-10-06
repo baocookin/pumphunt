@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     record_raw_trades: bool = False
     # Confirm every PumpPortal migration with getTransaction (slot + pool from chain, 1 credit each).
     rpc_confirm: bool = True
+    # Primary source: poll getSignaturesForAddress(authority) and confirm every successful new tx.
+    # ~100 tx/h on the authority, a third of them failed migrate races that cost nothing.
+    rpc_poll: bool = True
+    poll_s: float = 30
+    backfill_s: float = 6 * 3600  # how far back a cold start (or a lost cursor) walks
+    rpc_concurrency: int = 4  # parallel getTransaction calls (Helius free tier allows ~10/s)
 
     # Secondary feed (coverage check + migration fallback). Free channels, no API key needed.
     pumpportal_enabled: bool = True

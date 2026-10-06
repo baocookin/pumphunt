@@ -7,7 +7,14 @@ Files under data_dir:
   migrations.jsonl         one line per graduation sighting (portal, rpc-confirmed, chain)
 
 Counters per hour: migrations_confirmed counts each mint once, the first time a pool is
-known from chain (websocket event, or getTransaction triggered by either feed).
+known from chain (websocket event, or getTransaction triggered by any path).
+
+Sources of migrate signatures, all deduplicated through `_claim`:
+  poller     getSignaturesForAddress(withdraw_authority) every poll_s; sees every migration,
+             including those whose authority is loaded via a lookup table. Primary.
+  websocket  logsSubscribe mentions=authority; only static-key txs (~54%), but instant.
+  PumpPortal relays about half of the migrations and sometimes pairs the wrong mint with a
+             signature; such rows are dropped once the chain says otherwise.
   survivor.jsonl           one line per harvested token (hypothesis C metrics)
 """
 
@@ -80,7 +87,17 @@ class Recorder:
             "no_event": 0,
             "last_rpc_ts": 0.0,
             "via": {"log": 0, "cpi": 0, "accounts": 0},
-            "triggered": {"portal": 0, "chain": 0},
+            "triggered": {"portal": 0, "chain": 0, "poller": 0},
+            "poller": {
+                "polls": 0,
+                "listed": 0,
+                "skipped_failed": 0,
+                "cursor": None,
+                "last_poll_ts": 0.0,
+                "last_error": None,
+                "backfill_from": None,
+            },
+            "portal_mislabeled": 0,
             "last_no_event": None,
             "withdraw_authority": None,
             "authority_static": None,
@@ -90,6 +107,9 @@ class Recorder:
         }
         self._tasks: set[asyncio.Task] = set()
         self._claimed: dict[str, None] = {}  # signatures already handled by some path (ordered set)
+        self._sig_mint: dict[str, str] = {}  # signature -> mint as the chain says
+        self._portal_sig_mint: dict[str, str] = {}  # signature -> mint as PumpPortal said
+        self._rpc_sem = asyncio.Semaphore(cfg.rpc_concurrency)
 
     def mentions(self) -> list[str]:
         out = [self.learned_authority or self.cfg.migration_authority]
@@ -99,15 +119,31 @@ class Recorder:
             out.append(PUMP_PROGRAM)
         return out
 
+    @staticmethod
+    def _trim(d: dict[str, Any], cap: int = 20_000) -> None:
+        while len(d) > cap:
+            del d[next(iter(d))]
+
     def _claim(self, signature: str) -> bool:
-        """True the first time a signature is seen. Both feeds and the log decoder check here,
+        """True the first time a signature is seen. Every path that could fetch a tx checks here,
         so one migration costs at most one getTransaction."""
         if not signature or signature in self._claimed:
             return False
         self._claimed[signature] = None
-        while len(self._claimed) > 20_000:
-            del self._claimed[next(iter(self._claimed))]
+        self._trim(self._claimed)
         return True
+
+    def prime_claims(self) -> int:
+        """On startup, treat every registry row that already has a pool as handled, so a cold-start
+        backfill does not re-fetch what earlier runs confirmed. Rows without a pool stay open."""
+        n = 0
+        for row in self.store.migrations(limit=50_000):
+            sig = row.get("signature")
+            if sig and row.get("pool"):
+                self._claimed[sig] = None
+                self._sig_mint[sig] = row["mint"]
+                n += 1
+        return n
 
     def _spawn(self, coro) -> None:
         """Run a coroutine in the background when a loop is running (no-op in sync tests)."""
@@ -141,7 +177,17 @@ class Recorder:
             self._claim(ev.signature)  # decoded from the logs: no need to fetch this tx
             row = self._migration_row(ev.data, ev.ts, ev.slot, ev.signature, "chain")
             if row["mint"] and row["pool"]:
+                self._note_chain_mint(ev.signature, row["mint"])
                 self._register(row, hour)
+
+    def _note_chain_mint(self, signature: str, mint: str) -> None:
+        """Remember the mint the chain reports for a signature and evict a PumpPortal row that
+        attached this signature to some other mint (seen in ~3% of its migration messages)."""
+        self._sig_mint[signature] = mint
+        self._trim(self._sig_mint)
+        wrong = self._portal_sig_mint.pop(signature, None)
+        if wrong and wrong != mint and self.store.drop_migration(wrong):
+            self.rpc_stats["portal_mislabeled"] += 1
 
     def _register(self, row: dict[str, Any], hour: str) -> str:
         """Record a sighting that carries the pool; count the mint as confirmed the first time."""
@@ -212,6 +258,12 @@ class Recorder:
                 return
             self.counts["portal_migrate"] += 1
             self.store.incr("migrations_portal", hour)
+            known = self._sig_mint.get(ev.signature)
+            if known and known != ev.mint:
+                self.rpc_stats["portal_mislabeled"] += 1  # chain already said this tx migrated another mint
+                return
+            self._portal_sig_mint[ev.signature] = ev.mint
+            self._trim(self._portal_sig_mint)
             # No pool address here; RPC confirmation (below) or the chain feed fills it in,
             # and the harvester resolves it by mint as a last resort.
             row = {
@@ -246,7 +298,8 @@ class Recorder:
         for delay in delays:
             await asyncio.sleep(delay)
             try:
-                tx = await self.rpc.get_transaction(signature)
+                async with self._rpc_sem:
+                    tx = await self.rpc.get_transaction(signature)
             except httpx.HTTPError as exc:
                 print(f"[rpc] getTransaction failed: {describe_http_error(exc)}")
                 tx = None
@@ -264,6 +317,7 @@ class Recorder:
             return False
         row = self._migration_row(info["event"], seen_ts, info["slot"], signature, "rpc")
         if row["mint"] and row["pool"]:
+            self._note_chain_mint(signature, row["mint"])
             self._register(row, hour_key(seen_ts))
             self.store.incr("migrations_rpc", hour_key(seen_ts))
         self.rpc_stats["confirmed"] += 1
@@ -316,6 +370,63 @@ class Recorder:
         print(f"[rpc] learned withdraw_authority {wa} (was {self.cfg.migration_authority}); re-subscribing")
         self.learned_authority = wa
         await self.feed.set_mentions(self.mentions())
+
+    # ---- poller: the authority's signature list is the complete record of migrations ----
+    async def poll_once(self, now: float | None = None) -> int:
+        """List the authority's signatures newer than the stored cursor (at most `backfill_s` back,
+        which is also the cold-start window) and confirm every successful one nobody claimed yet.
+        Returns how many transactions were handed to confirm_migration."""
+        assert self.rpc is not None
+        now = now or time.time()
+        address = self.learned_authority or self.cfg.migration_authority
+        cursor = self.store.get_kv("poller_cursor")
+        floor = now - self.cfg.backfill_s
+        st = self.rpc_stats["poller"]
+        sigs: list[dict[str, Any]] = []
+        before = None
+        while True:
+            page = await self.rpc.get_signatures(address, limit=1000, before=before, until=cursor)
+            sigs.extend(page)
+            if len(page) < 1000 or (page[-1].get("blockTime") or 0) < floor:
+                break
+            before = page[-1]["signature"]
+        if cursor is None:
+            st["backfill_from"] = floor
+        sigs = [s for s in sigs if (s.get("blockTime") or now) >= floor]
+        st["polls"] += 1
+        st["listed"] += len(sigs)
+        st["last_poll_ts"] = now
+        fetched = 0
+        for s in reversed(sigs):  # oldest first, so rows land in chain order
+            if s.get("err"):
+                st["skipped_failed"] += 1
+                continue
+            if not self._claim(s["signature"]):
+                continue
+            self.rpc_stats["triggered"]["poller"] += 1
+            fetched += 1
+            seen = float(s.get("blockTime") or now)
+            self._spawn(self.confirm_migration(s["signature"], seen, delays=(0, 5, 20)))
+        if sigs:
+            st["cursor"] = sigs[0]["signature"]
+            self.store.set_kv("poller_cursor", st["cursor"])
+        return fetched
+
+    async def run_poller(self) -> None:
+        hours = self.cfg.backfill_s / 3600
+        print(f"[poller] getSignaturesForAddress every {self.cfg.poll_s:.0f}s, backfill {hours:.1f}h")
+        while True:
+            try:
+                n = await self.poll_once()
+                if n:
+                    print(f"[poller] {n} new tx")
+            except httpx.HTTPError as exc:
+                self.rpc_stats["poller"]["last_error"] = describe_http_error(exc)
+                print(f"[poller] rpc error: {describe_http_error(exc)}")
+            except Exception as exc:  # noqa: BLE001 - never let the poller die
+                self.rpc_stats["poller"]["last_error"] = f"{type(exc).__name__}: {exc}"
+                print(f"[poller] error: {exc}")
+            await asyncio.sleep(self.cfg.poll_s)
 
     # ---- harvester ----
     async def harvest_once(self, gecko: GeckoTerminal, now: float | None = None) -> int:
@@ -387,7 +498,10 @@ class Recorder:
                 self.rpc = SolanaRpc(
                     client, self.cfg.solana_http_url or http_url_from_ws(self.cfg.solana_ws_url)
                 )
+            print(f"[recorder] {self.prime_claims()} confirmed rows already in the registry")
             tasks = [self.run_chain(), self.run_status()]
+            if self.rpc is not None and self.cfg.rpc_poll:
+                tasks.append(self.run_poller())
             if self.cfg.pumpportal_enabled:
                 tasks.append(self.run_portal())
             if self.cfg.run_harvester:

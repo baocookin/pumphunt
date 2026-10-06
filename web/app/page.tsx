@@ -11,7 +11,8 @@ type NoEvent = { signature?: string; found?: boolean; log_truncated?: boolean; p
 type Rpc = {
   confirmed?: number; failed?: number; no_event?: number; last_rpc_ts?: number; via?: Record<string, number>; triggered?: Record<string, number>; last_no_event?: NoEvent | null;
   withdraw_authority?: string | null; authority_static?: boolean | null; migrate_ix?: string | null;
-  migrate_users?: Record<string, number>; migrate_user_static?: boolean | null;
+  migrate_users?: Record<string, number>; migrate_user_static?: boolean | null; portal_mislabeled?: number;
+  poller?: { polls?: number; listed?: number; skipped_failed?: number; cursor?: string | null; last_poll_ts?: number; last_error?: string | null; backfill_from?: number | null };
 };
 type Stats = {
   build_sha?: string;
@@ -111,9 +112,15 @@ export default function Page() {
         <div className="tile"><div className="k">WebSocket PumpPortal</div><div className="v">{portal ? (portal.connected ? "connected" : "down") : "–"} <span className="k">· {portal?.connects ?? 0} lần nối · {portal?.stale_reconnects ?? 0} vì im lặng</span></div><div className="k">{pools ? `migration theo nền tảng: ${pools}` : ""}</div><div className="k mono">{portal?.last_error ?? ""}</div></div>
         <div className="tile"><div className="k">Notification / event decode</div><div className="v">{feed?.notifications ?? 0} <span className="k">/ {feed?.events ?? 0}</span></div></div>
         <div className="tile">
+          <div className="k">Poller getSignaturesForAddress (nguồn chính)</div>
+          <div className="v">{rpc?.poller?.polls ?? 0} <span className="k">lần · {rpc?.poller?.listed ?? 0} tx liệt kê · {rpc?.poller?.skipped_failed ?? 0} tx lỗi bỏ qua</span></div>
+          <div className="k">{rpc?.poller?.last_poll_ts ? `lần cuối ${Math.max(0, Math.round(now - rpc.poller.last_poll_ts))}s trước` : "chưa chạy"}{rpc?.poller?.cursor ? ` · cursor ${short(rpc.poller.cursor)}` : ""}{rpc?.portal_mislabeled ? ` · PumpPortal gán sai mint ${rpc.portal_mislabeled}` : ""}</div>
+          <div className="k mono">{rpc?.poller?.last_error ?? ""}</div>
+        </div>
+        <div className="tile">
           <div className="k">RPC confirm (getTransaction)</div>
           <div className="v">{rpc?.confirmed ?? 0} <span className="k">ok · {rpc?.failed ?? 0} fail · {rpc?.no_event ?? 0} no‑event</span></div>
-          <div className="k">{rpc?.triggered ? `kích hoạt bởi websocket ${rpc.triggered.chain ?? 0} · pumpportal ${rpc.triggered.portal ?? 0}` : ""}</div>
+          <div className="k">{rpc?.triggered ? `kích hoạt bởi poller ${rpc.triggered.poller ?? 0} · websocket ${rpc.triggered.chain ?? 0} · pumpportal ${rpc.triggered.portal ?? 0}` : ""}</div>
           <div className="k">{rpc?.via ? `nhận qua log ${rpc.via.log ?? 0} · cpi ${rpc.via.cpi ?? 0} · accounts ${rpc.via.accounts ?? 0}` : ""}</div>
           {rpc?.last_no_event?.signature && (
             <div className="k mono">
