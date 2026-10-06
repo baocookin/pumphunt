@@ -64,24 +64,44 @@ class FakeChain:
     token_filter: how the provider treats `tokenTransfer`: "honour" (keeps the trades only),
     "ignore" (returns everything), "drop" (honours it but loses one trade), "reject" (errors)."""
 
-    def __init__(self, txs, *, gtfa=True, token_filter="honour", max_full=1000, too_large_above=None):
+    def __init__(
+        self,
+        txs,
+        *,
+        gtfa=True,
+        token_filter="honour",
+        max_full=1000,
+        too_large_above=None,
+        finalized_only=True,
+    ):
         self.txs = sorted(txs, key=lambda t: (t["slot"], t.get("transactionIndex", 0)))
         self.by_sig = {t["transaction"]["signatures"][0]: t for t in self.txs}
         self.gtfa = gtfa
         self.token_filter = token_filter
         self.max_full = max_full
         self.too_large_above = too_large_above
+        self.finalized_only = finalized_only  # like Helius: tokenTransfer needs finalized commitment
         self.calls: list[dict] = []
         self.sig_calls: list[tuple] = []
         self.tx_calls: list[str] = []
 
     async def get_transactions_for_address(
-        self, address, *, full, sort, limit, filters, pagination_token=None
+        self, address, *, full, sort, limit, filters, pagination_token=None, commitment="confirmed"
     ):
         filtered = "tokenTransfer" in filters
         self.calls.append(
-            {"full": full, "sort": sort, "limit": limit, "filtered": filtered, "bt": filters.get("blockTime")}
+            {
+                "full": full,
+                "sort": sort,
+                "limit": limit,
+                "filtered": filtered,
+                "bt": filters.get("blockTime"),
+                "commitment": commitment,
+                "address": address,
+            }
         )
+        if filtered and self.finalized_only and commitment != "finalized":
+            raise RpcError(-32602, "Invalid params: tokenTransfer filter requires finalized commitment")
         if self.gtfa is not True:
             raise RpcError(-32601, "Method not found") if not self.gtfa else RpcError(-32000, self.gtfa)
         if filtered and self.token_filter == "reject":

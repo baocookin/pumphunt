@@ -74,6 +74,11 @@ def test_the_token_filter_is_used_only_once_verified():
     swaps, st = run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000, mint=MINT))
     assert st["filtered"] and st["fetched"] == 4 and len(swaps) == 4 and st["complete"]
     assert len(chain.calls) == 1 and chain.calls[0]["filtered"]
+    # Helius serves the filter at finalized commitment only; unfiltered reads stay at confirmed
+    assert chain.calls[0]["commitment"] == "finalized"
+    chain.calls.clear()
+    run(f.window(POOL, ts[0] - 10, ts[-1] + 10, 1000))  # no mint: no filter
+    assert chain.calls[0]["commitment"] == "confirmed"
 
 
 @pytest.mark.parametrize(
