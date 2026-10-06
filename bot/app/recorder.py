@@ -32,7 +32,7 @@ from .config import Settings
 from .curve_history import curve_history
 from .events import Event
 from .feed import PumpPortalFeed
-from .fills import compute_fills, flow_features, state_at
+from .fills import compute_fills, decision_state, flow_features, state_at
 from .funding import features as funding_features
 from .funding import first_funders, pick_wallets
 from .gecko import GeckoTerminal
@@ -134,6 +134,8 @@ class Recorder:
         }
         self.fetcher: SwapFetcher | None = None
         self.task_errors: dict[str, dict[str, Any]] = {}  # loop name -> last crash, for the status page
+        self.beats: dict[str, float] = {}  # loop name -> last sign of progress
+        self._loops: dict[str, tuple[asyncio.Task, float | None]] = {}
         self.rpc: SolanaRpc | None = None
         self.learned_authority: str | None = None
         self.learned_signer: str | None = None
@@ -283,7 +285,7 @@ class Recorder:
         t = float(row.get("chain_ts") or row["ts"])
         for d in cfg.holder_snapshot_delays_min:
             member = f"{row['mint']}|{row['pool']}|{d}"
-            self.store.schedule("snap", member, t + d * 60 + cfg.fill_latency_s)
+            self.store.schedule("snap", member, t + d * 60)  # the decision time, before any latency
 
     async def snapshot_once(self, now: float | None = None) -> int:
         """Take every holder snapshot that is due; one that is too late is dropped, one that
@@ -320,6 +322,7 @@ class Recorder:
     async def run_snapshots(self) -> None:
         print(f"[snapshots] holders at T+{self.cfg.holder_snapshot_delays_min} min of each migration")
         while True:
+            self.beat("snapshots")
             try:
                 await self.snapshot_once()
             except Exception as exc:  # noqa: BLE001 - a bad snapshot must not stop the queue
@@ -587,6 +590,7 @@ class Recorder:
         hours = self.cfg.backfill_s / 3600
         print(f"[poller] getSignaturesForAddress every {self.cfg.poll_s:.0f}s, backfill {hours:.1f}h")
         while True:
+            self.beat("poller")
             try:
                 n = await self.poll_once()
                 if n:
@@ -624,6 +628,7 @@ class Recorder:
                 hs["last_error"] = f"pools_info_multi: {type(exc).__name__}"
         done = 0
         for row in rows:
+            self.beat("harvester")  # a batch can take many minutes: progress is per row
             t0 = int(row["ts"])
             try:
                 pool = row.get("pool") or await gecko.resolve_pool(row["mint"])
@@ -739,7 +744,7 @@ class Recorder:
         flow_swaps: list = []
         flow_stats: dict[str, Any] = {}
         for d in sorted({d for d, _ in replay}):
-            t_e = int(t_mig + d * 60 + lat)
+            t_e = int(t_mig + d * 60)  # what was visible when deciding: no execution latency
             lo, hi = t_e - cfg.fills_flow_s, t_e
             if covered and covered[0] <= lo and hi <= covered[1]:
                 flows[f"d{d}"] = flow_features(window, t_e, cfg.fills_flow_s)
@@ -751,6 +756,7 @@ class Recorder:
                 flow_swaps.extend(fw)
 
         times = {t_mig + d * 60 + lat for d, _ in cells} | {t_mig + (d + h) * 60 + lat for d, h in cells}
+        times |= {t_mig + d * 60 for d in cfg.entry_delays_min}  # decision times, for the features
         times = {t for t in times if t <= now}
         if covered:
             times = {t for t in times if not (covered[0] <= t <= covered[1])}
@@ -772,6 +778,8 @@ class Recorder:
             replay_range=covered,
         )
         metrics["flow"] = flows
+        seen = [d for d in cfg.entry_delays_min if t_mig + d * 60 <= now]
+        metrics["decision"] = {f"d{d}": decision_state(swaps, t_mig + d * 60) for d in seen}
         metrics["fills_version"] = FILLS_VERSION
         metrics["fills_t0"] = t_mig
         metrics["swaps"] = {
@@ -842,24 +850,29 @@ class Recorder:
         dev = (curve or {}).get("dev")
         holders: dict[str, Any] = {}
         for d, doc in snaps.items():
-            state = state_at(swaps, t_mig + d * 60 + cfg.fill_latency_s) if swaps else None
+            state = state_at(swaps, t_mig + d * 60) if swaps else None
             h = {**concentration(doc), **exit_power(doc, state), "late_s": doc.get("late_s")}
             if found:
                 h["dev_share"] = group_share(doc, [dev] if dev else [])
                 h["bundle_share"] = group_share(doc, bundle)
             holders[f"d{d}"] = h
         funding = None
-        first = snaps[min(snaps)] if snaps else None
-        if first and found and cfg.features_funding_wallets > 0:
-            state = state_at(swaps, t_mig + min(snaps) * 60 + cfg.fill_latency_s) if swaps else None
+        first_d = min(snaps) if snaps else min(cfg.holder_snapshot_delays_min or [30])
+        first = snaps.get(first_d)
+        if found and cfg.features_funding_wallets > 0:
+            state = state_at(swaps, t_mig + first_d * 60) if swaps else None
             if state is not None and state.real_sol >= cfg.features_funding_min_real_sol:
-                wallets = pick_wallets(dev, bundle, first["holders"], cfg.features_funding_wallets)
+                # the largest holders when a snapshot exists, else the curve's earliest buyers
+                ranked = (
+                    first["holders"] if first else [[w, 0] for w in (curve or {}).get("early_wallets") or []]
+                )
+                wallets = pick_wallets(dev, bundle, ranked, cfg.features_funding_wallets)
                 try:
                     fund, looked = await first_funders(
                         self.fetcher, self.store, wallets, cfg.features_funding_ttl_days * 86_400
                     )
-                    outside = (first.get("supply") or 0) - (first.get("pool_amount") or 0)
-                    held = {o: amt for o, amt in first["holders"]}
+                    outside = (first.get("supply") or 0) - (first.get("pool_amount") or 0) if first else 0
+                    held = {o: amt for o, amt in first["holders"]} if first else {}
                     funding = funding_features(fund, dev, curve.get("t_create"), held, outside)
                     funding["looked"] = looked
                     hs["funding_lookups"] += looked
@@ -900,6 +913,7 @@ class Recorder:
             api_key_header=self.cfg.gecko_api_key_header,
         )
         while True:
+            self.beat("harvester")
             try:
                 n = await self.harvest_once(self.gecko)
                 if n:
@@ -912,6 +926,7 @@ class Recorder:
     # ---- status heartbeat ----
     async def run_status(self) -> None:
         while True:
+            self.beat("status")
             self.store.set_status(
                 started=self.started,
                 now=time.time(),
@@ -927,29 +942,65 @@ class Recorder:
                 snapshots=self.snapshot_stats,
                 gecko=self.gecko.stats if self.gecko else None,
                 task_errors=self.task_errors,
+                loops={n: round(time.time() - t, 1) for n, t in self.beats.items()},  # seconds since progress
                 mentions=self.mentions(),
             )
             await asyncio.sleep(5)
 
-    async def _supervise(self, name: str, factory, restart_s: float = 5.0) -> None:
+    def beat(self, name: str) -> None:
+        """A loop is alive and making progress (see `run_watchdog`)."""
+        self.beats[name] = time.time()
+
+    def _note_failure(self, name: str, what: str) -> None:
+        err = self.task_errors.setdefault(name, {"count": 0})
+        err["count"] += 1
+        err["last"] = what[:300]
+        err["ts"] = time.time()
+
+    async def _supervise(
+        self, name: str, factory, restart_s: float = 5.0, stall_s: float | None = None
+    ) -> None:
         """Run `factory()` forever: a loop that raises is logged, counted and started again.
         Without this, one uncaught exception ends `gather`, closes the shared HTTP client and
-        silently kills every other loop (seen in production when PumpPortal refused a reconnect)."""
+        silently kills every other loop (seen in production when PumpPortal refused a reconnect).
+        With `stall_s`, a loop that stops beating for that long is cancelled by the watchdog and
+        started again too: a hung await never raises."""
         while True:
+            self.beat(name)
+            task = asyncio.create_task(factory())
+            self._loops[name] = (task, stall_s)
             try:
-                await factory()
+                await task
                 return  # a loop that returns on purpose is done
             except asyncio.CancelledError:
-                raise
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    task.cancel()
+                    raise  # shutdown
+                self._note_failure(name, "stalled: no progress, restarted by the watchdog")
+                print(f"[recorder] {name} stalled; restarting")
             except Exception as exc:  # noqa: BLE001 - keep the recorder alive no matter what
-                err = self.task_errors.setdefault(name, {"count": 0})
-                err["count"] += 1
-                err["last"] = f"{type(exc).__name__}: {exc}"[:300]
-                err["ts"] = time.time()
+                self._note_failure(name, f"{type(exc).__name__}: {exc}")
                 print(
                     f"[recorder] {name} crashed ({type(exc).__name__}: {exc}); restarting in {restart_s:.0f}s"
                 )
-                await asyncio.sleep(restart_s)
+            await asyncio.sleep(restart_s)
+
+    def check_stalls(self, now: float | None = None) -> list[str]:
+        """Cancel every supervised loop that has not beaten within its `stall_s`."""
+        now = now or time.time()
+        stalled = []
+        for name, (task, stall_s) in list(self._loops.items()):
+            if stall_s and not task.done() and now - self.beats.get(name, now) > stall_s:
+                task.cancel()
+                stalled.append(name)
+        return stalled
+
+    async def run_watchdog(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            for name in self.check_stalls():
+                print(f"[watchdog] {name} made no progress for too long; cancelled")
 
     async def run(self) -> None:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -970,15 +1021,23 @@ class Recorder:
                     token_filter=self.cfg.fills_token_filter,
                 )
                 print(f"[recorder] {self.requeue_for_fills()} harvested rows re-queued for fills")
-            tasks = [self._supervise("chain", self.run_chain), self._supervise("status", self.run_status)]
+            # the feeds have their own stale-socket reconnects; the rest must keep beating
+            tasks = [
+                self._supervise("chain", self.run_chain),
+                self._supervise("status", self.run_status, stall_s=120),
+                self._supervise("watchdog", self.run_watchdog),
+            ]
             if self.rpc is not None and self.cfg.rpc_poll:
-                tasks.append(self._supervise("poller", self.run_poller))
+                tasks.append(
+                    self._supervise("poller", self.run_poller, stall_s=max(600, 20 * self.cfg.poll_s))
+                )
             if self.cfg.pumpportal_enabled:
                 tasks.append(self._supervise("portal", self.run_portal))
             if self.cfg.run_harvester:
-                tasks.append(self._supervise("harvester", lambda: self.run_harvester(client)))
+                harvester = lambda: self.run_harvester(client)  # noqa: E731
+                tasks.append(self._supervise("harvester", harvester, stall_s=1800))
             if self.rpc is not None and self.cfg.holder_snapshots:
-                tasks.append(self._supervise("snapshots", self.run_snapshots))
+                tasks.append(self._supervise("snapshots", self.run_snapshots, stall_s=300))
             await asyncio.gather(*tasks)
 
 

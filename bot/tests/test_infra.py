@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 import websockets
@@ -340,6 +341,16 @@ def test_api_routes_under_prefix(monkeypatch, tmp_path):
     with TestClient(api_mod.app) as c:
         health = c.get("/api/health").json()
         assert health["ok"] is True and health["build_sha"] == "dev"
+        # with a recorder expected: healthy while its status is fresh, 503 once it goes stale
+        api_mod.settings.run_recorder = True
+        try:
+            api_mod.store.set_status(now=time.time())
+            assert c.get("/api/health").json()["status_age_s"] < 5
+            api_mod.store.set_status(now=time.time() - 600)
+            stale = c.get("/api/health")
+            assert stale.status_code == 503 and stale.json()["ok"] is False
+        finally:
+            api_mod.settings.run_recorder = False
         assert c.get("/api/stats").json()["chain_scope"] == "migrations"
         assert c.get("/api/survivor/summary").json()["verdict"]["status"] == "INSUFFICIENT"
         assert "dash" in c.get("/").text

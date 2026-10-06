@@ -12,15 +12,17 @@ import io
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .fills import size_key
+from .prereg import evaluate
 from .recorder import Recorder
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
 from .store import hour_key, make_store
@@ -29,7 +31,6 @@ from .survivor import latest_by_mint, summarize
 store = make_store(settings.redis_url)
 
 
-@contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(Recorder(settings, store).run()) if settings.run_recorder else None
     try:
@@ -52,9 +53,23 @@ def _last_hours(n: int) -> list[str]:
     return [hour_key(now - 3600 * i) for i in range(n - 1, -1, -1)]
 
 
+STARTED = time.time()
+STATUS_STALE_S = 120  # the recorder writes its status every 5 s
+
+
 @api.get("/health")
 def health():
-    return {"ok": True, "chain_scope": settings.chain_scope, "build_sha": settings.build_sha}
+    """503 when the recorder stopped writing its status (or never started within 5 minutes),
+    so a container health probe can restart it; the API itself may still be fine."""
+    body: dict[str, Any] = {"ok": True, "chain_scope": settings.chain_scope, "build_sha": settings.build_sha}
+    if settings.run_recorder:
+        last = store.status().get("now")
+        age = time.time() - float(last) if last else None
+        body["status_age_s"] = round(age, 1) if age is not None else None
+        if (age is not None and age > STATUS_STALE_S) or (age is None and time.time() - STARTED > 300):
+            body["ok"] = False
+            return JSONResponse(body, status_code=503)
+    return body
 
 
 @api.get("/stats")
@@ -100,9 +115,10 @@ def migrations(limit: int = 100):
 
 @api.get("/survivor/summary")
 def survivor_summary():
-    return summarize(
-        store.survivor_rows(), settings.entry_delays_min, settings.horizons_min, settings.fill_sizes_sol
-    )
+    rows = store.survivor_rows()
+    out = summarize(rows, settings.entry_delays_min, settings.horizons_min, settings.fill_sizes_sol)
+    out["prereg"] = evaluate(rows)
+    return out
 
 
 @api.get("/survivor/rows")

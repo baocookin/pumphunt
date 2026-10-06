@@ -97,6 +97,8 @@ Chi phí ước tính: volume $0.10/GB/tháng; Helius free đủ cho scope `migr
 
 Chạy `python -m app.analyze data/survivor.jsonl --cost_bps 500` để xem kết quả đổ vỡ ở mức chi phí nào. Verdict không được chỉnh sau khi thấy dữ liệu.
 
+Verdict chính hiện là ô khớp lệnh thật 1 SOL. Từ 06/10/2026 có thêm **C2** (chỉ pool giao dịch được lúc quyết định: ≥ 10 SOL thật và có swap trong 60 giây trước T+30), kiểm định *chỉ* trên migration sau `2026‑10‑06 16:00 UTC`, cùng quy trình khám phá → kiểm định cho các luật dựa trên đặc trưng. Toàn văn: [`docs/PREREG.md`](docs/PREREG.md).
+
 ## Dữ liệu sinh ra (`/data`)
 
 * `chain-YYYY-MM-DD.jsonl` — mọi event pump.fun decode được từ RPC (slot, signature; trade dạng compact ở scope `full`).
@@ -113,6 +115,8 @@ Chạy `python -m app.analyze data/survivor.jsonl --cost_bps 500` để xem kế
 * `chain_feed.connected / subscribed / notifications`: WebSocket đã nối, số subscription được RPC xác nhận, số notification nhận. `notifications = 0` kéo dài trong khi `counts.portal_migrate` tăng = địa chỉ đang subscribe không nằm trong tx migrate.
 * `rpc.confirmed / failed / no_event`: số migration được xác nhận on‑chain qua `getTransaction`, kích hoạt bởi websocket (`rpc.triggered.chain`) hoặc PumpPortal (`rpc.triggered.portal`); `rpc.via` cho biết event đọc từ log, từ bản sao self‑CPI, hay từ account của instruction. `rpc.withdraw_authority` là địa chỉ thật đọc từ tx; `authority_static=false` nghĩa là tx đó nạp nó qua address‑lookup‑table và `logsSubscribe` không thấy. Vì người ký luôn là key tĩnh, recorder đếm `rpc.migrate_users` và tự subscribe thêm ví ký ≥80% trong ≥10 migration đã xác nhận.
 * `mentions`: danh sách địa chỉ feed đang subscribe (sau khi tự học).
+* `loops`: số giây kể từ lần cuối mỗi vòng lặp báo còn tiến triển. Vòng nào im quá hạn (poller 10 phút, harvester 30 phút, snapshot 5 phút, status 2 phút) bị watchdog huỷ và chạy lại; lần đó ghi vào `task_errors` là "stalled". Nếu cả recorder dừng vì lỗi, API khởi động lại nó sau 10 giây.
+* `/api/health` trả **503** khi status không được cập nhật quá 2 phút (hoặc chưa từng có sau 5 phút chạy). Bật health probe của Bunny vào `/api/health` để container tự khởi động lại khi đó.
 
 ## Pháp lý (Việt Nam)
 

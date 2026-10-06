@@ -111,6 +111,22 @@ def state_at(swaps: Sequence[Swap], t: float) -> PoolState | None:
     return _post(best)
 
 
+def decision_state(swaps: Sequence[Swap], t: float) -> dict[str, Any] | None:
+    """The pool as a trader saw it at the decision time t (no execution latency): real and
+    virtual SOL, effective liquidity, mark price and seconds since the last swap."""
+    st = state_at(swaps, t)
+    if st is None:
+        return None
+    traded = [s.ts for s in swaps if s.ts <= t]
+    return {
+        "real_sol": st.real_sol,
+        "virtual_sol": st.virtual / LAMPORTS,
+        "liquidity_sol": st.liquidity_sol,
+        "mark": st.mark,
+        "last_trade_age_s": (t - max(traded)) if traded else None,
+    }
+
+
 def curve_buy(state: PoolState, q: int) -> tuple[int, PoolState]:
     """Put `q` lamports into the curve (fees already set aside). Returns (tokens_out, new state)."""
     eff = state.effective
