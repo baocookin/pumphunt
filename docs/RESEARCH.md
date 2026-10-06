@@ -2,6 +2,10 @@
 
 Tài liệu này tóm tắt những gì tìm được, kết luận chiến lược, và vì sao kiến trúc được chọn như hiện tại. Nhiều trang bị proxy chặn nên một số số liệu lấy từ trích dẫn trong kết quả tìm kiếm; chỗ nào chưa kiểm chứng trực tiếp sẽ ghi rõ.
 
+## Sniper (07/10/2026)
+
+Nghiên cứu riêng về snipe token mới, phép đo trên 77.043 launch tháng 9/2026, bộ dữ liệu forward chính xác tới slot, và giả thuyết S đăng ký trước: [`SNIPER.md`](SNIPER.md). Kết luận chính: trên cùng các launch, vé đứng ngay sau lệnh mua của dev có EV +12% (KTC 95% +10,9…+13,2%), vé vào ~1 giây sau có EV −8% (−8,1…−7,7%), không bộ lọc đơn giản nào đổi dấu; vị trí có lãi là vị trí bundle của người tạo token.
+
 ## 0. Vòng 2 (10/2026): 6 agent phản biện — kết luận thay thế toàn bộ mục 4 bên dưới
 
 Bốn agent nghiên cứu (ai kiếm tiền thật · adverse selection 60s đầu · sân chơi ít chen chúc · kiểm toán bằng chứng), một agent fact‑check, một agent red‑team. Những gì sống sót:

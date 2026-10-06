@@ -90,6 +90,14 @@ def compute_metrics(
                 # the mark is nominal and a real sell would move it.
                 "exit_stale_s": t_out - last_out.ts if last_out else None,
             }
+    # Highest candle after the migration against the first traded price, per window: what a ticket
+    # held through graduation could have touched (a 5-minute high, not a fill for any size).
+    ref = candles[0].open or candles[0].close
+    out["peak_x"] = {}
+    for label, span in (("1h", 3600), ("6h", 6 * 3600), ("24h", 24 * 3600)):
+        highs = [c.high for c in candles if c.ts < t0 + span]
+        late = now is not None and t0 + span > now
+        out["peak_x"][label] = max(highs) / ref if highs and ref > 0 and not late else None
     out["vol_0_30m"] = _volume(candles, t0, t0 + 1800)
     out["vol_30_60m"] = _volume(candles, t0 + 1800, t0 + 3600)
     out["vol_1_6h"] = _volume(candles, t0 + 3600, t0 + 6 * 3600)

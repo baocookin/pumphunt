@@ -91,3 +91,13 @@ def test_reprice_and_render():
     assert abs(s["cells"]["d30_h60"]["median"] - (1.1 * 0.9 - 1)) < 1e-9
     text = render(s, DELAYS, HORIZONS)
     assert "T+30m" in text and "C (T+30m -> 1h)" in text
+
+
+def test_peaks_after_the_migration():
+    # 1.0 at the start, 3.0 after 30 min, 7.0 after 5 h, 0.2 later; highs are 1% above the close
+    cs = candles({0: 1.0, 30: 3.0, 300: 7.0, 400: 0.2})
+    m = compute_metrics(cs, T0, DELAYS, HORIZONS, 350)
+    assert abs(m["peak_x"]["1h"] - 3.03) < 1e-9 and abs(m["peak_x"]["6h"] - 7.07) < 1e-9
+    assert abs(m["peak_x"]["24h"] - 7.07) < 1e-9
+    early = compute_metrics(cs, T0, DELAYS, HORIZONS, 350, now=T0 + 2 * 3600)
+    assert abs(early["peak_x"]["1h"] - 3.03) < 1e-9 and early["peak_x"]["6h"] is None

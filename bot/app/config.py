@@ -92,10 +92,11 @@ class Settings(BaseSettings):
     fills_token_filter: bool = True  # try Helius' tokenTransfer filter; used only once verified
     fills_max_pages: int = 40  # signature pages (1,000 each), only without getTransactionsForAddress
     # RPC credits all research reads (fills, curve history, holders, funding) may spend per UTC
-    # day; the harvester pauses until the next day once reached. Measured: ~150 credits of fills
-    # + ~40 of curve history per token, ~1,200 graduates a day. 300k/day is ~9M/month, inside
-    # the Developer plan's 10M with room for the recorder itself (~5k/day).
-    fills_daily_credits: int = 300_000
+    # day; the harvester pauses until the next day once reached. Measured: ~90 credits per token
+    # on average (06/10/2026), ~1,200 graduates a day; the cap binds only while a backlog drains.
+    # With the sniper sample's 20k this is 300k/day at most, ~9M/month, inside the Developer
+    # plan's 10M with room for the recorder itself (~5k/day).
+    fills_daily_credits: int = 280_000
     fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction
@@ -117,6 +118,22 @@ class Settings(BaseSettings):
     features_funding_wallets: int = 8
     features_funding_min_real_sol: float = 5
     features_funding_ttl_days: int = 30
+
+    # --- sniper sample (hypothesis S, docs/SNIPER.md) ---
+    # A census of launches from the mint authority's signatures (1 credit per poll), a share of
+    # them kept by a hash of the create signature, each read once its window has passed: its
+    # create (1 credit) and, for a SOL curve, every curve transaction in the window (10 credits per
+    # 100). ~57k launches a day; 2% is ~1,100 launches, ~15-20k credits a day.
+    sniper_enabled: bool = True
+    sniper_sample_per_10k: int = 200
+    # of the graduations a sniper can enter (dev buy < 85 SOL), 92% happen within 1 h, 95% within 2 h
+    sniper_window_s: int = 7_200
+    sniper_delay_s: int = 300  # read this long after the window closed (finalized, indexed)
+    sniper_max_tx: int = 5_000  # transactions read per curve at most (500 credits)
+    sniper_daily_credits: int = 20_000
+    sniper_census_max_pages: int = 30  # after a restart: up to ~12 h of launches listed again
+    sniper_poll_s: float = 60
+    sniper_batch: int = 20
 
     # --- survivor-entry hypothesis (C) ---
     entry_delays_min: list[int] = [0, 5, 15, 30, 60]

@@ -26,6 +26,8 @@ from .fills import size_key
 from .prereg import evaluate
 from .recorder import Recorder
 from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_from_tx, tx_diagnostics
+from .sniper import lottery
+from .sniper import summarize as sniper_summarize
 from .store import hour_key, make_store
 from .survivor import latest_by_mint, summarize
 
@@ -78,6 +80,7 @@ def stats():
     hours = _last_hours(24)
     chain = store.counters("creates_chain", hours)
     portal = store.counters("creates_portal", hours)
+    census = store.counters("creates_census", hours)  # the sniper sample's census of launches
     # Mints whose pool is known from chain (websocket event or getTransaction), each counted once.
     mig = store.counters("migrations_confirmed", hours)
     mig_portal = store.counters("migrations_portal", hours)
@@ -91,6 +94,7 @@ def stats():
         "creates_24h": chain_total if full else portal_total,
         "creates_24h_chain": chain_total,
         "creates_24h_portal": portal_total,
+        "creates_24h_census": sum(census.values()),
         # <1 means PumpPortal missed events; >1 means the chain feed did. Only meaningful in full scope.
         "portal_coverage": (portal_total / chain_total) if (full and chain_total) else None,
         "migrations_24h": sum(mig.values()),
@@ -101,6 +105,7 @@ def stats():
                 "hour": h,
                 "creates_chain": chain[h],
                 "creates_portal": portal[h],
+                "creates_census": census[h],
                 "migrations": mig[h],
                 "migrations_portal": mig_portal[h],
             }
@@ -120,6 +125,33 @@ def survivor_summary():
     out = summarize(rows, settings.entry_delays_min, settings.horizons_min, settings.fill_sizes_sol)
     out["prereg"] = evaluate(rows)
     return out
+
+
+_SNIPER_CACHE: dict[str, Any] = {"ts": 0.0, "body": None}
+
+
+@api.get("/sniper/summary")
+def sniper_summary():
+    """Hypothesis S (docs/SNIPER.md): the sampled launches' simulated tickets over the whole grid,
+    the pre-registered verdict, the lottery touches, and the census. Cached for a minute."""
+    now = time.time()
+    if _SNIPER_CACHE["body"] is not None and now - _SNIPER_CACHE["ts"] < 60:
+        return _SNIPER_CACHE["body"]
+    results = store.rows("sniper")
+    body = sniper_summarize(results)
+    body["lottery"] = lottery(results, latest_by_mint(store.survivor_rows()))
+    hours = _last_hours(24)
+    body["creates_24h_census"] = sum(store.counters("creates_census", hours).values())
+    body["creates_24h_portal"] = sum(store.counters("creates_portal", hours).values())
+    body["recorder"] = store.status().get("sniper")
+    _SNIPER_CACHE.update(ts=now, body=body)
+    return body
+
+
+@api.get("/sniper/rows")
+def sniper_rows(limit: int = 200):
+    """The newest simulated launches (compact: nets aligned with the summary's grid)."""
+    return store.rows("sniper", min(limit, 5000))
 
 
 @api.get("/survivor/rows")
@@ -323,7 +355,8 @@ async def debug_tx(signature: str):
 
 @api.get("/config")
 def config():
-    return settings.model_dump(exclude={"pumpportal_api_key", "redis_url", "solana_ws_url", "gecko_api_key"})
+    secret = {"pumpportal_api_key", "redis_url", "solana_ws_url", "solana_http_url", "gecko_api_key"}
+    return settings.model_dump(exclude=secret)
 
 
 app.include_router(api)

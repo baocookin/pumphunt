@@ -82,3 +82,14 @@ def test_cache_expires(store):
     store.cache_set("short", "v", ttl_s=1)
     time.sleep(1.1)
     assert store.cache_get("short") is None
+
+
+def test_row_lists_keep_the_newest_rows_in_order(store, monkeypatch):
+    import app.store as st
+
+    monkeypatch.setattr(st, "MAX_LIST_ROWS", 3)
+    for i in range(5):
+        store.push_row("sniper", {"i": i, "nets": [0.1, None]})
+    assert [r["i"] for r in store.rows("sniper")] == [2, 3, 4]
+    assert [r["i"] for r in store.rows("sniper", 2)] == [3, 4] and store.rows("sniper", 0) == []
+    assert store.rows("other") == [] and store.rows("sniper")[0]["nets"] == [0.1, None]
