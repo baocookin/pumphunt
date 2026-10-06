@@ -747,3 +747,93 @@ def test_rows_from_an_older_execution_model_are_requeued_once(rec):
     assert sorted(r["mint"] for r in rec.store.pending_harvest(t0 + 10, 10)) == ["NOFILLS", "V1"]
     assert rec.requeue_for_fills() == 0  # flagged: never again for this version
     assert rec.store.get_kv("fills_requeued_v2")
+
+
+# ---- decision-time features ----
+def _mig_event(t, mint, pool, **data):
+    return ChainEvent(
+        float(t), 1, f"sig-{mint}", "migrate", {"mint": mint, "pool": pool, "timestamp": t, **data}
+    )
+
+
+def test_holder_snapshots_are_queued_for_tradeable_sol_pools_only(rec):
+    rec.cfg.holder_snapshot_delays_min = [30, 60]
+    rec.on_chain(_mig_event(1_000, "TINY", "PT", quote_mint=WSOL, sol_amount_sol=0.03))
+    rec.on_chain(_mig_event(1_000, "USD", "PU", quote_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"))
+    rec.on_chain(_mig_event(1_000, "OK", "PO", quote_mint=WSOL, sol_amount_sol=85.0))
+    rec.on_chain(_mig_event(1_000, "OK", "PO", quote_mint=WSOL, sol_amount_sol=85.0))  # seen again
+    assert rec.store.queue_len("snap") == 2
+    lat = rec.cfg.fill_latency_s
+    assert rec.store.take_due("snap", 1e12, 10) == [
+        ("OK|PO|30", 1_000 + 1_800 + lat),
+        ("OK|PO|60", 1_000 + 3_600 + lat),
+    ]
+
+
+class BrokenHolderRpc:
+    async def get_token_largest_accounts(self, mint):
+        raise httpx.ConnectError("down")
+
+
+def test_a_late_snapshot_is_dropped_and_a_failed_one_retried_while_on_time(rec):
+    rec.cfg.holder_snapshot_max_late_s = 300
+    rec.rpc = BrokenHolderRpc()
+    rec.store.schedule("snap", "M|P|30", 1_000)
+    assert asyncio.run(rec.snapshot_once(now=1_400)) == 0 and rec.snapshot_stats["late"] == 1
+    rec.store.schedule("snap", "N|Q|30", 2_000)
+    assert asyncio.run(rec.snapshot_once(now=2_005)) == 0
+    assert rec.snapshot_stats["errors"] == 1 and "ConnectError" in rec.snapshot_stats["last_error"]
+    assert rec.store.take_due("snap", 1e12, 10) == [("N|Q|30", 2_020.0)]  # retried 15 s later
+
+
+def test_harvest_attaches_snapshots_curve_history_and_funders(rec):
+    from fakehistory import HistoryRpc, HolderRpc, Router, create_event, curve_tx, first_tx, trade_event
+
+    real = real_swaps()
+    t_mig = min(tx["blockTime"] for tx in real.values()) - 120  # swaps at +120, +400, +665, +673 s
+    cfg = rec.cfg
+    cfg.entry_delays_min, cfg.horizons_min, cfg.fill_sizes_sol = [0, 5], [1, 5], [1]
+    cfg.fills_replay_cells = ["d0_h5", "d5_h5"]
+    cfg.holder_snapshot_delays_min = [5]
+    cfg.features_funding_min_real_sol = 0
+    mint, curve, dev, b1, h1, funder = (fake_pubkey(n) for n in (9001, 9003, 11, 12, 15, 777))
+    rec.on_chain(_mig_event(t_mig, mint, POOL, quote_mint=WSOL, sol_amount_sol=85.0, bonding_curve=curve))
+
+    # the live snapshot at T+5 min (+3 s latency), taken 10 s after it was due
+    largest = [("vault", 6 * 10**14), ("a1", 3 * 10**13), ("a2", 10**13)]  # 1e15 supply, 6 decimals
+    rec.rpc = HolderRpc(largest, {"vault": POOL, "a1": dev, "a2": h1}, 10**15)
+    now = t_mig + 300 + 3 + 10
+    assert asyncio.run(rec.snapshot_once(now=now)) == 1 and rec.snapshot_stats["taken"] == 1
+    assert rec.store.get_kv("credits:" + time.strftime("%Y-%m-%d", time.gmtime(now))) == "3"
+    assert len(list(read_jsonl(rec.holders_log.path_for(now)))) == 1
+
+    # at harvest: the pool's swaps, the curve's history and the wallets' first transactions
+    t_create = t_mig - 600
+    history = HistoryRpc(
+        {
+            curve: [
+                curve_tx(10, t_create, [create_event(t_create, mint, curve, dev)], idx=1, curve=curve),
+                curve_tx(10, t_create, [trade_event(dev, 2, True, t_create, mint, dev)], idx=2, curve=curve),
+                curve_tx(10, t_create, [trade_event(b1, 5, True, t_create, mint, dev)], idx=3, curve=curve),
+            ],
+            dev: [first_tx(dev, funder, t_create - 2_000)],
+            b1: [first_tx(b1, funder, t_create - 1_000)],
+            h1: [first_tx(h1, dev, t_create - 500)],
+        }
+    )
+    rec.fetcher = SwapFetcher(Router({POOL: FakeChain(list(real.values()))}, history), token_filter=False)
+    g = FakeGecko([Candle(t_mig + m * 60, 1.0, 1.0, 1.0, 1.0, 10.0) for m in range(0, 1500)])
+    assert asyncio.run(rec.harvest_once(g, now=t_mig + 26 * 3600)) == 1
+    row = rec.store.survivor_rows()[0]
+    h = row["holders"]["d5"]
+    assert h["top1"] == 0.075 and h["top10"] == 0.1 and h["pool_share"] == 0.6 and h["late_s"] == 10
+    assert h["dev_share"] == 0.075 and h["bundle_share"] == 0 and 0 < h["top10_exit_share"] < 1
+    c = row["curve"]
+    assert c["found"] and c["graduate_s"] == 600 and c["dev_buy_sol"] == 2 and c["bundle_sol"] == 5
+    assert c["bundle_wallets"] == [b1] and c["curve_tx"] == 3 and c["page_complete"]
+    fu = row["funding"]
+    assert fu["wallets"] == 3 and fu["looked"] == 3 and fu["max_cluster"] == 2  # dev and b1 share a funder
+    assert fu["dev_linked"] == 2 and fu["fresh_1d"] == 3
+    hs = rec.harvest_stats
+    assert hs["features_rows"] == 1 and hs["funding_rows"] == 1 and hs["funding_lookups"] == 3
+    assert rec.store.pop_doc("holders", f"{mint}|5") is None  # attached once, then gone

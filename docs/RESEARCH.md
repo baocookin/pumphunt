@@ -155,3 +155,13 @@ Với pool bình thường, verdict không đổi theo cách mô hình hóa: bi 
 **Phân bố số giao dịch** trong cửa sổ T+25 → T+121 phút (40 pool ngẫu nhiên): trung vị 13, p75 389, p90 7,041, lớn nhất > 31,000. Đa số pool gần như chết; chi phí đọc tập trung ở ~10–15% pool sôi động, cũng là nhóm duy nhất có thể giao dịch được. Trần 15,000 tx/cửa sổ đọc trọn ~93% pool, trung bình ~200 credit/pool (Helius: 0.1 credit/tx). Bộ lọc `tokenTransfer` của Helius (giữ giao dịch có chuyển token của pool) có thể bỏ được nhiễu bot; recorder chỉ bật nó sau khi so cạnh nhau với trang không lọc và thấy nó giữ đủ mọi swap (RPC công khai bỏ qua bộ lọc này).
 
 **Thay đổi phương pháp (fills v2, mọi dòng được tính lại):** trạng thái ở mốc vào/ra = swap mới nhất trước mốc (quét lùi); cửa sổ đầy đủ quanh T+30→T+90 và T+60→T+120 khi vừa trần, cho mô hình replay và order flow 5 phút trước khi vào; ba mô hình ghost/persist/replay báo song song, replay là ước lượng chính khi có. Verdict vẫn theo tiêu chí đã đăng ký.
+
+## Đặc trưng tại thời điểm quyết định (06/10/2026)
+
+Mục tiêu: những gì đã công khai *trước* lúc vào lệnh ở T+30, để một bộ lọc đăng ký trước có thể dùng. Ba nguồn, đều đo trên dữ liệu thật trước khi viết code:
+
+* **Cách bonding curve được lấp đầy** (100 giao dịch đầu của curve). Ví dụ: một token có cả vòng đời curve chỉ 9 giao dịch — bốn ví mua ngay trong slot tạo token (~79 SOL), tốt nghiệp trong cùng giây; pool PumpSwap của nó giảm 98.6% trong giờ đầu. Một token khác tốt nghiệp nhờ chính dev mua 85 SOL trong slot tạo. Token "tự nhiên" hơn: 8–160 phút để tốt nghiệp, 33–39 ví mua chỉ trong 20–30 giây đầu, và dev đã bán 6–11 SOL ngay trong khoảng đó.
+* **Nguồn tiền của ví** (giao dịch đầu tiên của ví). Ở token bị mua gom trong slot tạo: cả 5 ví (dev + 4 ví bundle) được tạo ~20 phút trước khi token ra đời, 4/5 được nạp từ *cùng một ví*. Ở các token tự nhiên: ví dev và người mua sớm đã tồn tại 6–430 ngày, không có cụm chung người nạp. Ví sàn cũng nạp cho nhiều ví không liên quan, nên địa chỉ người nạp được lưu nguyên để lọc offline (người nạp xuất hiện ở rất nhiều token không liên quan = sàn).
+* **Holder lúc T+30/T+60** (chụp trực tiếp): tỷ trọng top holder ngoài pool, dev/bundle còn giữ bao nhiêu, và *khả năng thoát* — SOL top‑10 rút được nếu bán hết vào pool đúng lúc đó. Lưu ý: event pump.fun xuất hiện hai lần trong một giao dịch (log + self‑CPI); số liệu chưa khử trùng lặp bị nhân đôi.
+
+Những đặc trưng này chỉ được dùng theo quy trình đăng ký trước (mục tiếp theo): chọn luật trên một phần dữ liệu, kiểm định trên phần sau, không chỉnh luật sau khi thấy kết quả.
