@@ -29,6 +29,10 @@ from .rpc import SolanaRpc, describe_http_error, http_url_from_ws, migration_fro
 from .store import Store, hour_key
 from .survivor import compute_metrics
 
+# Subscribe to the wallet that signs migrations once it clearly is one keeper, not random users.
+SIGNER_MIN_N = 10
+SIGNER_MIN_SHARE = 0.8
+
 _TRADE_COMPACT = (
     "mint",
     "user",
@@ -59,13 +63,17 @@ class Recorder:
             "migrate": 0,
             "portal_create": 0,
             "portal_migrate": 0,
+            "portal_migrate_other": 0,  # PumpPortal also relays other launchpads' migrations
             "harvested": 0,
         }
+        self.portal_pools: dict[str, int] = {}  # PumpPortal `pool` field of migration messages
         self.last_chain_ts = 0.0
         self.last_portal_ts = 0.0
         self.feed: SolanaLogsFeed | None = None
+        self.portal_feed: PumpPortalFeed | None = None
         self.rpc: SolanaRpc | None = None
         self.learned_authority: str | None = None
+        self.learned_signer: str | None = None
         self.rpc_stats: dict[str, Any] = {
             "confirmed": 0,
             "failed": 0,
@@ -77,12 +85,16 @@ class Recorder:
             "withdraw_authority": None,
             "authority_static": None,
             "migrate_ix": None,
+            "migrate_users": {},  # signer -> confirmed migrations, top entries only
+            "migrate_user_static": None,
         }
         self._tasks: set[asyncio.Task] = set()
         self._claimed: dict[str, None] = {}  # signatures already handled by some path (ordered set)
 
     def mentions(self) -> list[str]:
         out = [self.learned_authority or self.cfg.migration_authority]
+        if self.learned_signer and self.learned_signer not in out:
+            out.append(self.learned_signer)
         if self.cfg.chain_scope == "full":
             out.append(PUMP_PROGRAM)
         return out
@@ -148,7 +160,7 @@ class Recorder:
         """
         if n.err or "migrate" in n.kinds or self.rpc is None:
             return
-        if n.mention != (self.learned_authority or self.cfg.migration_authority):
+        if n.mention is None or n.mention == PUMP_PROGRAM or n.mention not in self.mentions():
             return
         if not self._claim(n.signature):
             return
@@ -174,7 +186,9 @@ class Recorder:
         }
 
     async def run_chain(self) -> None:
-        self.feed = SolanaLogsFeed(self.cfg.solana_ws_url, self.mentions(), self.cfg.chain_commitment)
+        self.feed = SolanaLogsFeed(
+            self.cfg.solana_ws_url, self.mentions(), self.cfg.chain_commitment, stale_s=self.cfg.chain_stale_s
+        )
         self.feed.on_notification = self.on_notification
         print(
             f"[chain] logsSubscribe {self.cfg.solana_ws_url} scope={self.cfg.chain_scope} {self.mentions()}"
@@ -191,6 +205,11 @@ class Recorder:
             self.counts["portal_create"] += 1
             self.store.incr("creates_portal", hour)
         elif ev.is_migration:
+            self.portal_pools[ev.pool] = self.portal_pools.get(ev.pool, 0) + 1
+            if "pump" not in ev.pool.lower():
+                # bonk.fun / Raydium LaunchLab graduations ride the same channel; not our market.
+                self.counts["portal_migrate_other"] += 1
+                return
             self.counts["portal_migrate"] += 1
             self.store.incr("migrations_portal", hour)
             # No pool address here; RPC confirmation (below) or the chain feed fills it in,
@@ -210,9 +229,11 @@ class Recorder:
                 self._spawn(self.confirm_migration(ev.signature, ev.ts))
 
     async def run_portal(self) -> None:
-        feed = PumpPortalFeed(self.cfg.pumpportal_ws_url, self.cfg.pumpportal_api_key)
+        self.portal_feed = PumpPortalFeed(
+            self.cfg.pumpportal_ws_url, self.cfg.pumpportal_api_key, stale_s=self.cfg.pumpportal_stale_s
+        )
         print(f"[portal] {self.cfg.pumpportal_ws_url}")
-        async for ev in feed.events():
+        async for ev in self.portal_feed.events():
             self.on_portal(ev)
 
     # ---- RPC confirmation of PumpPortal migrations ----
@@ -250,7 +271,31 @@ class Recorder:
         via = info["event"].get("via", "log")
         self.rpc_stats["via"][via] = self.rpc_stats["via"].get(via, 0) + 1
         await self._learn_authority(info.get("accounts"))
+        await self._learn_signer(info.get("accounts"))
         return True
+
+    async def _learn_signer(self, accounts: dict[str, Any] | None) -> None:
+        """Watch the wallet that signs migrations once one wallet clearly does nearly all of them.
+
+        `withdraw_authority` can be loaded through an address lookup table, which
+        `logsSubscribe` cannot match; the signer is always a static key.
+        """
+        if not accounts or not accounts.get("user"):
+            return
+        user = accounts["user"]
+        users = self.rpc_stats["migrate_users"]
+        users[user] = users.get(user, 0) + 1
+        if len(users) > 10:  # keep the table small: drop the rarest
+            del users[min(users, key=users.get)]
+        self.rpc_stats["migrate_user_static"] = accounts.get("user_static")
+        if self.learned_signer or self.feed is None or not accounts.get("user_static"):
+            return
+        total = self.rpc_stats["confirmed"]
+        if total < SIGNER_MIN_N or users[user] < SIGNER_MIN_SHARE * total:
+            return
+        print(f"[rpc] {user} signed {users[user]}/{total} migrations; subscribing to it as well")
+        self.learned_signer = user
+        await self.feed.set_mentions(self.mentions())
 
     async def _learn_authority(self, accounts: dict[str, Any] | None) -> None:
         if not accounts:
@@ -329,6 +374,8 @@ class Recorder:
                 counts=self.counts,
                 chain_scope=self.cfg.chain_scope,
                 chain_feed=self.feed.stats if self.feed else None,
+                portal_feed=self.portal_feed.stats if self.portal_feed else None,
+                portal_pools=self.portal_pools,
                 rpc=self.rpc_stats,
                 mentions=self.mentions(),
             )

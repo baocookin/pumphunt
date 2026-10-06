@@ -11,7 +11,7 @@ from app.config import Settings
 from app.events import Event
 from app.gecko import Candle
 from app.jsonl import read_jsonl
-from app.recorder import Recorder
+from app.recorder import SIGNER_MIN_N, Recorder
 from app.rpc import find_migrate_ix
 from app.store import MemoryStore, hour_key
 
@@ -87,7 +87,7 @@ def mig(ts, mint="M1", pool="P1"):
     )
 
 
-def portal_mig(ts, mint="M1", signature="psig"):
+def portal_mig(ts, mint="M1", signature="psig", pool="pump-amm"):
     return Event(
         ts=ts,
         tx_type="migrate",
@@ -99,7 +99,8 @@ def portal_mig(ts, mint="M1", signature="psig"):
         v_sol=0,
         v_tokens=0,
         market_cap_sol=0,
-        raw={"txType": "migrate", "mint": mint, "signature": signature},
+        pool=pool,
+        raw={"txType": "migrate", "mint": mint, "signature": signature, "pool": pool},
     )
 
 
@@ -248,6 +249,42 @@ def test_websocket_notification_is_ignored_when_not_worth_fetching(rec):
     ev = ChainEvent(t, 1, "s2", "migrate", mig(t).data)
     rec.on_chain(ev)
     assert rec._claim("s2") is False and rec._claim("s") is False
+
+
+def test_other_launchpad_migrations_are_counted_but_not_recorded(rec):
+    t = 1_700_000_000.0
+    rec.rpc = FakeRpc({})
+    rec.on_portal(portal_mig(t, mint="B1", signature="sb", pool="raydium-launchlab"))
+    rec.on_portal(portal_mig(t, mint="P1", signature="sp", pool="pump-amm"))
+    rec.on_portal(portal_mig(t, mint="P2", signature="sq", pool="pump"))
+    assert rec.counts["portal_migrate_other"] == 1 and rec.counts["portal_migrate"] == 2
+    assert sorted(r["mint"] for r in rec.store.migrations()) == ["P1", "P2"]
+    assert rec.portal_pools == {"raydium-launchlab": 1, "pump-amm": 1, "pump": 1}
+    assert rec.rpc_stats["triggered"]["portal"] == 2
+    assert rec._claim("sb") is True  # nothing was ever fetched for the bonk.fun one
+
+
+def test_dominant_migrate_signer_gets_subscribed(rec):
+    t = 1_700_000_000.0
+    tx = fake_migrate_tx(PK_A, PK_B, WA)
+    acc = find_migrate_ix(tx)
+    rec.feed = FakeFeed(notifications=400)  # the authority feed delivers, yet misses ALT-loaded migrations
+    rec.rpc = FakeRpc({f"s{i}": tx for i in range(SIGNER_MIN_N + 1)})
+
+    async def run():
+        for i in range(SIGNER_MIN_N):
+            assert await rec.confirm_migration(f"s{i}", t, delays=(0,))
+            if i < SIGNER_MIN_N - 1:
+                assert rec.learned_signer is None and rec.feed.mentions is None
+        # notifications from the signer's own subscription are now worth fetching
+        rec.on_notification(notif(f"s{SIGNER_MIN_N}", acc["user"], t))
+        await asyncio.gather(*rec._tasks)
+
+    asyncio.run(run())
+    assert acc["user_static"] is True and rec.learned_signer == acc["user"]
+    assert rec.feed.mentions == [rec.cfg.migration_authority, acc["user"]] == rec.mentions()
+    assert rec.rpc_stats["migrate_users"] == {acc["user"]: SIGNER_MIN_N + 1}
+    assert rec.rpc_stats["triggered"]["chain"] == 1 and rec.rpc_stats["confirmed"] == SIGNER_MIN_N + 1
 
 
 def test_rpc_confirmation_records_why_a_tx_is_not_a_migration(rec):

@@ -31,7 +31,7 @@ def test_migration_from_tx_decodes_event_and_accounts():
     assert info["slot"] == 42 and info["event"]["mint"] == PK_A and info["event"]["pool"] == PK_B
     acc = info["accounts"]
     assert acc["ix"] == "migrate_v2" and acc["withdraw_authority"] == WA
-    assert acc["withdraw_authority_static"] is True
+    assert acc["withdraw_authority_static"] is True and acc["user_static"] is True
 
 
 def test_legacy_migrate_variant_and_lookup_table_authority():

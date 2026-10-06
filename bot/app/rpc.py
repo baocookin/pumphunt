@@ -165,9 +165,11 @@ def find_migrate_ix(tx: dict[str, Any]) -> dict[str, Any] | None:
         out: dict[str, Any] = {"ix": name}
         for nm, i in zip(names, idxs, strict=False):
             out[nm] = keys[i] if i < len(keys) else None
-        # logsSubscribe `mentions` only matches static keys; an authority loaded via an
-        # address lookup table cannot be subscribed to.
+        # logsSubscribe `mentions` only matches static keys; an account loaded via an
+        # address lookup table cannot be subscribed to. Signers are always static.
         out["withdraw_authority_static"] = len(idxs) > 1 and idxs[1] < n_static
+        u = names.index("user")
+        out["user_static"] = len(idxs) > u and idxs[u] < n_static
         return out
     return None
 

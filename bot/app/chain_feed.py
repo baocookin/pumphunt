@@ -43,18 +43,28 @@ class ChainNotification:
 
 
 class SolanaLogsFeed:
-    def __init__(self, ws_url: str, mentions: list[str], commitment: str = "confirmed"):
+    def __init__(
+        self,
+        ws_url: str,
+        mentions: list[str],
+        commitment: str = "confirmed",
+        stale_s: float = 600,
+        backoff_s: float = 1.0,
+    ):
         if not mentions:
             raise ValueError("at least one address to watch is required")
         self.ws_url = ws_url
         self.mentions = list(mentions)
         self.commitment = commitment
+        self.stale_s = stale_s  # the authority signs several tx a minute; silence this long is a dead socket
+        self.backoff_s = backoff_s
         self._ws = None
         self._subs: dict[int, str] = {}  # subscription id -> watched address
         self.on_notification: Callable[[ChainNotification], None] | None = None
         self.stats: dict[str, Any] = {
             "connected": False,
             "connects": 0,
+            "stale_reconnects": 0,
             "subscribed": 0,
             "notifications": 0,
             "events": 0,
@@ -121,7 +131,7 @@ class SolanaLogsFeed:
         )
 
     async def events(self) -> AsyncIterator[ChainEvent]:
-        backoff = 1.0
+        backoff = self.backoff_s
         while True:
             try:
                 async with websockets.connect(
@@ -130,10 +140,15 @@ class SolanaLogsFeed:
                     self._ws = ws
                     self.stats["connected"] = True
                     self.stats["connects"] += 1
-                    backoff = 1.0
+                    backoff = self.backoff_s
                     for msg in self.subscribe_messages():
                         await ws.send(msg)
-                    async for raw in ws:
+                    while True:
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=self.stale_s)
+                        except TimeoutError:
+                            self.stats["stale_reconnects"] += 1
+                            raise TimeoutError(f"no message for {self.stale_s:.0f}s") from None
                         for ev in self._on_message(json.loads(raw), time.time()):
                             yield ev
             except (TimeoutError, websockets.ConnectionClosed, OSError) as exc:
