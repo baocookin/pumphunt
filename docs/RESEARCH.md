@@ -9,8 +9,9 @@ Nghiên cứu riêng về snipe token mới, phép đo trên 77.043 launch thán
 ## Giả thuyết G và GS (07/10/2026)
 
 Mua một bonding curve đã có 60 SOL thật, giữ tới khi tốt nghiệp, bán 3 giây sau migration ([`SNIPER.md`](SNIPER.md), mục 8–9).
-- Trên dữ liệu thăm dò, 30% số curve chạm 60 SOL đã hoàn tất ngay trong phút đầu (phần lớn là bundle trong 2 giây). Người ngoài không vào kịp, nên kỳ vọng +21% ban đầu bị thổi phồng.
-- Curve chạm 60 SOL sau giây 60: +8,6% mỗi vé (KTC +4,5…+12,7%), dương ở cả hai nửa thời gian. Đây là GS, đăng ký thêm với cùng mẫu kiểm định của G, phán quyết một lần trên 300 vé đầu.
+- Trên dữ liệu thăm dò, 29% số curve chạm 60 SOL đã hoàn tất ngay trong phút đầu (phần lớn là bundle trong 2 giây). Người ngoài không vào kịp, nên kỳ vọng +21% ban đầu bị thổi phồng.
+- Curve chạm 60 SOL sau giây 60: +6,0% mỗi vé khi vào trễ 1 SOL (KTC +1,9…+10,1%), dương ở cả hai nửa thời gian, nhưng chỉ còn +1,5% nếu trễ 3 SOL. Đây là GS, đăng ký thêm với cùng mẫu kiểm định của G, phán quyết một lần trên 300 vé đầu. Kết cục nhiều khả năng là INCONCLUSIVE.
+- Mọi kiểu vào sau migration (T+5 đến T+60 phút, giữ 1, 6 hoặc 24 giờ) đều có trung bình âm, từ −9,5% đến −73% (1.066 token ngày 4–5/10). Kể cả pool còn ≥ 40 SOL thật và vừa có giao dịch ở T+60, giữ 24 giờ vẫn −44%. Không thấy "sóng thứ hai".
 - Mua ngay sau migration rồi bán lúc T+5 phút (ăn theo lệnh mua lại của BOOST): −5,7% (KTC −10,0…−1,4%, 725 token ngày 4–5/10). Người nắm token từ curve xả vào lệnh mua của BOOST.
 
 ## Thăm dò luật đặc trưng (06/10/2026, trước cửa sổ thăm dò)

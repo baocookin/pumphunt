@@ -24,12 +24,14 @@ harvested before the fills cells carried the pool's token reserve at entry appro
 the opening state with a constant product, which understates the price if BOOST's buys come out
 of the virtual reserve (the sale is then valued low, not high).
 
-Hypothesis GS (section 9), registered after a closer look at the same exploration data: 30% of
-those curves completed within a minute of their create (343 of 1,783 within 2 s, bundles an
-outsider cannot enter), curves already at >= 60 SOL at t0+60 s that had not completed lost 38.5%
-on average, and curves that reached 60 SOL later had a mean of +8.6% [+4.5, +12.7] per ticket. GS
-keeps G's ticket, sample and criteria and only takes triggers that landed >= 60 s after the
-create; it is judged once, on its first 300 tickets.
+Hypothesis GS (section 9), registered after a closer look at the same exploration data
+(research/graduation_speed.py): 29% of those curves completed within a minute of their create
+(343 of 1,815 within 2 s, bundles an outsider cannot enter), curves already at >= 60 SOL at
+t0+60 s that had not completed lost 38.5% on average, and curves that reached 60 SOL later had a
+mean of +6.0% [+1.9, +10.1] per ticket bought 1 SOL past the trigger (+1.5% at 3 SOL). The +21%
+above also kept only curves that rose 3 SOL past the trigger; without that survivor bias it is
++15.5%. GS keeps G's ticket, sample and criteria and only takes triggers that landed >= 60 s after
+the create; it is judged once, on its first 300 tickets.
 """
 
 import math
