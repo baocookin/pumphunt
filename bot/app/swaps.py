@@ -142,7 +142,9 @@ class SwapFetcher:
             self.credits += gtfa_credits(n) if full else 10
             self._gtfa_failures = 0
             self.gtfa = True
-            return res
+            # the page size actually asked for: a 413 halves it, and a caller that judges whether
+            # a page came back short must compare against this, not against what it passed in
+            return {**res, "asked": limit}
 
     def _gtfa_failed(self, exc: RpcError) -> None:
         """An unsupported method ends getTransactionsForAddress for the run at once; other errors

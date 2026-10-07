@@ -333,6 +333,8 @@ def _cfg(tmp_path, **kw):
         sniper_daily_credits=20_000,
         sniper_census_max_pages=30,
         sniper_batch=20,
+        sniper_stop_on_short_page=True,
+        sniper_page_audit_per_10k=0,
         data_dir=str(tmp_path),
     )
     base.update(kw)
@@ -448,3 +450,69 @@ def test_a_launch_that_cannot_be_read_is_recorded_and_the_batch_goes_on(tmp_path
     assert rows["weird"]["status"] == "error" and "KeyError" in rows["weird"]["error"]
     assert rows["good"]["status"] == "ok" and store.rows("sniper")[0]["mint"] == mint
     assert rows["good"]["credits"] == 11 and sn.stats["gtfa"] is True
+
+
+class HeliusLikeRpc(FakeRpc):
+    """Like Helius: a pagination token comes back even after the last page."""
+
+    async def get_transactions_for_address(self, address, **kw):
+        res = await super().get_transactions_for_address(address, **kw)
+        return {**res, "paginationToken": res["paginationToken"] or str(10**9)}
+
+
+def _one_curve(tmp_path, rpc_cls, before=None, **cfg):
+    store = MemoryStore()
+    mint, curve = fake_pubkey(41), fake_pubkey(42)
+    t = 10_000
+    c_tx = create_tx_for(mint, curve, 500, t)
+    buys = [[trade_ev(mint, A, True, t + 1 + i, 1.0 + i, 2.0 + i)] for i in range(4)]
+    txs = [c_tx] + [curve_tx(501 + i, t + 1 + i, ev, idx=1, curve=curve) for i, ev in enumerate(buys)]
+    rpc = rpc_cls([], {"c1": c_tx}, {curve: txs})
+    sn = SniperRecorder(_cfg(tmp_path, **cfg), store, rpc, tmp_path)
+    if before:
+        before(sn)
+    store.schedule("snipe", f"c1|500|{t}", t + 7_500)
+    assert run(sn.harvest_once(now=t + 7_500)) == 1
+    row = next(iter(read_jsonl(tmp_path / "sniper-1970-01-01.jsonl")))
+    return sn, rpc, store, row
+
+
+def test_a_short_page_ends_the_read_unless_the_read_is_audited(tmp_path):
+    sn, rpc, store, row = _one_curve(tmp_path, HeliusLikeRpc)
+    # 5 transactions on a 100-transaction page: the read stops, the empty page is never asked for
+    assert len(rpc.calls) == 1 and len(row["trades"]) == 5 and not row["window"]["truncated"]
+    assert store.get_kv("sniper_credits:1970-01-01") == str(1 + 10)
+    audited, rpc2, _, row2 = _one_curve(tmp_path / "a", HeliusLikeRpc, sniper_page_audit_per_10k=10_000)
+    assert len(rpc2.calls) == 2 and audited.stats["short_then_empty"] == 1 and row2["trades"] == row["trades"]
+    # once an audit has seen data after a short page, every read goes on to the end
+    seen_more = lambda sn: sn.stats.update(short_then_more=1)  # noqa: E731
+    _, rpc3, _, _ = _one_curve(tmp_path / "c", HeliusLikeRpc, before=seen_more)
+    assert len(rpc3.calls) == 2
+
+
+def test_a_halved_page_is_not_taken_for_the_last_one(tmp_path):
+    class Halving(HeliusLikeRpc):
+        """The first call answers 413, as a provider does for a response too large."""
+
+        async def get_transactions_for_address(self, address, **kw):
+            if not self.calls and kw["limit"] > 2:
+                self.calls.append((address, kw["full"], kw["sort"], kw["limit"]))
+                raise httpx.HTTPStatusError("413", request=None, response=SimpleNamespace(status_code=413))
+            return await super().get_transactions_for_address(address, **kw)
+
+    sn, rpc, _, row = _one_curve(tmp_path, Halving)
+    # pages of 50 are asked for after the 413; 5 transactions come back in one of them
+    assert [c[3] for c in rpc.calls] == [100, 50] and len(row["trades"]) == 5
+
+
+def test_a_read_stopped_by_its_cap_is_truncated(tmp_path):
+    _, rpc, _, row = _one_curve(tmp_path, HeliusLikeRpc, sniper_max_tx=3)
+    assert row["window"]["truncated"] is False  # 5 of 100 came back: short, so complete
+
+    class Small(HeliusLikeRpc):
+        def __init__(self, *a):
+            super().__init__(*a)
+            self.page_cap = 2  # full pages of two transactions
+
+    _, rpc, _, row = _one_curve(tmp_path / "b", Small, sniper_max_tx=3, sniper_stop_on_short_page=False)
+    assert row["window"]["truncated"] is True and row["window"]["tx"] >= 3

@@ -1,7 +1,7 @@
 """Hypothesis G: a ticket bought once a curve stood at X SOL, sold right after the migration."""
 
 import pytest
-from test_sniper import DEV, A, B, path_row, ticket_value
+from test_sniper import DEV, V0, A, B, path_row, ticket_value
 
 from app.fills import LAMPORTS, sell_ex
 from app.graduation import (
@@ -164,3 +164,35 @@ def test_gs_is_judged_once_on_its_first_tickets():
     gs = summarize(results, [])["prereg_gs"]
     assert (gs["verdict"], gs["exit_waiting"], gs["judged_until"]) == ("WAIT", 1, PREREG_G_TS + G_MIN_N - 1)
     assert gs["n"] == G_MIN_N - 1
+
+
+def test_features_at_the_trigger():
+    from test_sniper import C, state
+
+    from app.graduation import trigger_features
+
+    steps = [(0, 0, DEV, 1.0), (1, 0, B, 5.0)]  # the dev and a create-slot+1 buyer: insiders
+    for k in range(3):  # C buys and sells the same tokens back within two slots, three times
+        steps += [(10 + 4 * k, 5 + k, C, 6.0), (11 + 4 * k, 5 + k, C, 5.0)]
+    steps += [(30, 400, A, 61.0)]  # the trigger, 400 s after the create
+    row = path_row(steps, complete_slot=None)
+    row["supply"] = 10**15
+    prev = V0
+    for t in row["trades"]:  # the SOL each trade moved (path_row leaves it at 0)
+        t[6], prev = int(abs(t[8] - prev)), t[8]
+    p = CurvePath(row)
+    f = trigger_features(p, len(p.vs) - 1)
+
+    def tokens(lo, hi):
+        return state(lo)[1] - state(hi)[1]
+
+    dev, b, a = tokens(0.0, 1.0), tokens(1.0, 5.0), tokens(5.0, 61.0)
+    assert f["buyers"] == 2 and f["wash_cycles"] == 3 and f["dev_sold"] is False
+    assert f["insider_ovh"] == pytest.approx((dev + b) / 10**15, abs=1e-5)
+    assert f["top1"] == pytest.approx(a / 10**15, abs=1e-5)
+    # the insiders paid a fraction of the price at 61 SOL; A paid about it
+    assert f["overhang_cheap"] == pytest.approx((dev + b) / (dev + b + a), abs=1e-4)
+    # only A's buy lies in the 300 s before the trigger
+    assert f["breadth_300"] == 1 and f["sell_share_300"] == 0 and f["net_sol_300"] > 50
+    ph = curve_phase(p, 60.0)
+    assert ph["why"] == "fail" and ph["f"] == f
