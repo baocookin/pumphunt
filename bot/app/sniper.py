@@ -193,6 +193,13 @@ class CurvePath:
         self.ts = [int(t[cols["ts"]]) for t in tr]
         self.vs = [float(t[cols["v_sol"]]) for t in tr]
         self.vt = [float(t[cols["v_tokens"]]) for t in tr]
+        # who traded, for features at a decision time (graduation.trigger_features)
+        self.users = [t[cols["user"]] for t in tr]
+        self.buys = [bool(t[cols["buy"]]) for t in tr]
+        self.sols = [int(t[cols["sol"]]) for t in tr]
+        self.toks = [int(t[cols["tokens"]]) for t in tr]
+        self.dev, self.creator = row.get("dev"), row.get("creator")
+        self.supply = int(row.get("supply") or 0)
         c = row.get("complete")
         self.complete_slot = int(c["slot"]) if c else None
         self.complete_ts = int(c["ts"]) if c and c.get("ts") is not None else None

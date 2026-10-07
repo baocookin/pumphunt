@@ -59,8 +59,75 @@ GS_MIN_TRIGGER_S = 60
 SPEEDS = ("fast", "slow", "unknown")
 
 
+# Features at the trigger (trigger_features): the recent-flow window, and what counts as a wash
+# cycle (one wallet buying and selling back the same tokens within two slots, three times or more).
+FLOW_S = 300
+WASH_SLOTS, WASH_TOL, WASH_MIN_CYCLES = 2, 0.02, 3
+
+
 def level_key(level: float) -> str:
     return f"{level:g}"
+
+
+def _wash_cycles(p: CurvePath, n: int) -> int:
+    """Buy-then-sell-back cycles by one wallet over trades 0..n-1 (FIFO, each trade used once),
+    counted for wallets with at least WASH_MIN_CYCLES of them."""
+    open_buys: dict[str, list[tuple[int, int]]] = {}
+    cycles: dict[str, int] = {}
+    for i in range(n):
+        u = p.users[i]
+        if p.buys[i]:
+            open_buys.setdefault(u, []).append((p.slots[i], p.toks[i]))
+            continue
+        q = open_buys.get(u) or []
+        while q and p.slots[i] - q[0][0] > WASH_SLOTS:
+            q.pop(0)
+        if q and abs(p.toks[i] - q[0][1]) <= WASH_TOL * q[0][1]:
+            q.pop(0)
+            cycles[u] = cycles.get(u, 0) + 1
+    return sum(c for c in cycles.values() if c >= WASH_MIN_CYCLES)
+
+
+def trigger_features(p: CurvePath, j: int) -> dict[str, Any]:
+    """What was public once trade j (the trigger) had landed, for exploring filters: how many
+    wallets bought, recent flow, how much supply the insiders (dev, creator, buyers of the create
+    slot and the next) and the largest holder still hold, and the share of held tokens bought at a
+    third of the current price or less (holders sitting on large gains)."""
+    n = j + 1
+    insiders = {u for u in (p.dev, p.creator) if u}
+    insiders |= {p.users[i] for i in range(n) if p.buys[i] and p.slots[i] <= p.s0 + 1}
+    net: dict[str, int] = {}
+    paid: dict[str, list[int]] = {}  # wallet -> [SOL spent, tokens bought]
+    for i in range(n):
+        u, t = p.users[i], p.toks[i]
+        net[u] = net.get(u, 0) + (t if p.buys[i] else -t)
+        if p.buys[i]:
+            c = paid.setdefault(u, [0, 0])
+            c[0] += p.sols[i]
+            c[1] += t
+    held = {u: v for u, v in net.items() if v > 0}
+    total = sum(held.values())
+    price = p.vs[j] / p.vt[j] if p.vt[j] else 0.0
+    cheap = sum(v for u, v in held.items() if paid.get(u, [0, 0])[1] and paid[u][0] / paid[u][1] <= price / 3)
+    recent = [i for i in range(n) if p.ts[i] >= p.ts[j] - FLOW_S]
+    buy_sol = sum(p.sols[i] for i in recent if p.buys[i])
+    sell_sol = sum(p.sols[i] for i in recent if not p.buys[i])
+    supply = p.supply or 0
+
+    def share(x: float) -> float | None:
+        return round(x / supply, 5) if supply else None
+
+    return {
+        "buyers": len({p.users[i] for i in range(n) if p.buys[i]} - insiders),
+        "breadth_300": len({p.users[i] for i in recent if p.buys[i]}),
+        "sell_share_300": round(sell_sol / buy_sol, 4) if buy_sol else None,
+        "net_sol_300": round((buy_sol - sell_sol) / LAMPORTS, 3),
+        "insider_ovh": share(sum(held.get(u, 0) for u in insiders)),
+        "top1": share(max(held.values())) if held else None,
+        "overhang_cheap": round(cheap / total, 4) if total else None,
+        "wash_cycles": _wash_cycles(p, n),
+        "dev_sold": any(not p.buys[i] and p.users[i] in (p.dev, p.creator) for i in range(n)),
+    }
 
 
 def curve_phase(
@@ -86,9 +153,15 @@ def curve_phase(
     dt = vt * net_in / (vs + net_in)
     out: dict[str, Any] = {"entry_real": round((vs - p.v_sol0) / LAMPORTS, 4), "dt": dt, **timing}
     if p.complete_slot is not None:
-        return {**out, "why": "grad", "complete_slots": p.complete_slot - p.slots[j]}
+        return {
+            **out,
+            "f": trigger_features(p, j),
+            "why": "grad",
+            "complete_slots": p.complete_slot - p.slots[j],
+        }
     if p.truncated:
         return {"why": "unresolved", **timing}
+    out["f"] = trigger_features(p, j)
     proceeds = p.value(len(p.vs) - 1, dt) / LAMPORTS
     return {**out, "why": "fail", "net": round((proceeds - FIXED_COST_SOL) / size - 1, 5)}
 
