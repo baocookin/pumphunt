@@ -69,8 +69,10 @@ type ExploreSample = { all: { n: number; median?: number; mean?: number; win?: n
 type ExploreC = { population: string; cell: string; window: [number, number]; samples: Record<string, ExploreSample> };
 type ExploreS = { window: [number, number]; cells: string[]; samples: Record<string, Record<string, ExploreSample>> };
 type GCell = { n: number; mean?: number; mean_ci95?: [number, number] | null; median?: number; win_rate?: number; rug_share?: number };
-type GLevel = { reached: number; grad: number; fail: number; jump: number; unresolved: number; exit_waiting: number; p_grad_given_ticket: number | null; cells: Record<string, GCell> };
-type Graduation = { levels: Record<string, GLevel>; prereg: GCell & { since: number; level: number; exit: string; min_n: number; robust_means: (number | null)[]; verdict: string } };
+type GSpeed = { reached: number; grad: number; fail: number; jump: number; unresolved: number; t3s: GCell };
+type GLevel = { reached: number; grad: number; fail: number; jump: number; unresolved: number; exit_waiting: number; p_grad_given_ticket: number | null; cells: Record<string, GCell>; by_speed?: Record<string, GSpeed> };
+type GPrereg = GCell & { since: number; level: number; exit: string; min_n: number; robust_means: (number | null)[]; verdict: string; min_trigger_s?: number; n_after?: number };
+type Graduation = { levels: Record<string, GLevel>; prereg: GPrereg; prereg_gs?: GPrereg };
 
 const num = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(2) : v.toPrecision(2));
 const rangeLabel = ([lo, hi]: [number | null, number | null]) =>
@@ -324,6 +326,11 @@ export default function Page() {
           <div className="v">{grad?.prereg.verdict ?? "…"}</div>
           <div className="k">{`n=${grad?.prereg.n ?? 0} / ${grad?.prereg.min_n ?? 300} · EV ${signed(grad?.prereg.mean)}${grad?.prereg.mean_ci95 ? ` (KTC 95% ${signed(grad.prereg.mean_ci95[0])} … ${signed(grad.prereg.mean_ci95[1])})` : ""} · thắng ${pct(grad?.prereg.win_rate, 0)} · mất gần hết ${pct(grad?.prereg.rug_share, 0)}`}</div>
         </div>
+        <div className={`tile verdict ${(grad?.prereg_gs?.verdict ?? "").toLowerCase()}`}>
+          <div className="k">{`GS: như G, chỉ khi curve chạm ${grad?.prereg_gs?.level ?? 60} SOL sau giây ${grad?.prereg_gs?.min_trigger_s ?? 60} kể từ lệnh tạo · phán quyết một lần trên ${grad?.prereg_gs?.min_n ?? 300} vé đầu (mục 9)`}</div>
+          <div className="v">{grad?.prereg_gs?.verdict ?? "…"}</div>
+          <div className="k">{`n=${grad?.prereg_gs?.n ?? 0} / ${grad?.prereg_gs?.min_n ?? 300}${grad?.prereg_gs?.n_after ? ` (+${grad.prereg_gs.n_after} sau phán quyết)` : ""} · EV ${signed(grad?.prereg_gs?.mean)}${grad?.prereg_gs?.mean_ci95 ? ` (KTC 95% ${signed(grad.prereg_gs.mean_ci95[0])} … ${signed(grad.prereg_gs.mean_ci95[1])})` : ""} · thắng ${pct(grad?.prereg_gs?.win_rate, 0)}`}</div>
+        </div>
       </div>
       <table>
         <thead><tr><th>Mức kích hoạt</th><th>chạm</th><th>có vé (tốt nghiệp / thất bại)</th><th>nhảy qua, không vào kịp</th><th>P(tốt nghiệp | có vé)</th><th>bán 3 giây sau migration</th><th>bán 5 phút sau</th></tr></thead>
@@ -336,6 +343,18 @@ export default function Page() {
                 const c = g.cells[w];
                 return <td key={w}>{c && c.n > 0 ? <>EV <span className={cls(c.mean)}>{signed(c.mean)}</span> · med {signed(c.median)} · wr {pct(c.win_rate, 0)} · n={c.n}</> : <span className="k">n=0</span>}</td>;
               })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>Tốc độ (mức 60 SOL)</th><th>chạm</th><th>tốt nghiệp / thất bại</th><th>nhảy qua</th><th>bán 3 giây sau migration</th></tr></thead>
+        <tbody>
+          {Object.entries(grad?.levels?.["60"]?.by_speed ?? {}).map(([sp, g]) => (
+            <tr key={sp}>
+              <td>{sp === "fast" ? "chạm trước giây 60" : sp === "slow" ? "chạm từ giây 60 (GS)" : "chưa ghi thời điểm"}</td>
+              <td>{g.reached}</td><td>{g.grad} / {g.fail}</td><td>{g.jump}</td>
+              <td>{g.t3s && g.t3s.n > 0 ? <>EV <span className={cls(g.t3s.mean)}>{signed(g.t3s.mean)}</span> · med {signed(g.t3s.median)} · n={g.t3s.n}</> : <span className="k">n=0</span>}</td>
             </tr>
           ))}
         </tbody>

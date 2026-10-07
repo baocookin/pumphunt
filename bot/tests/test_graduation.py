@@ -7,9 +7,11 @@ from app.fills import LAMPORTS, sell_ex
 from app.graduation import (
     G_MIN_N,
     G_SAMPLE_PER_10K,
+    GS_MIN_TRIGGER_S,
     PREREG_G_TS,
     curve_phase,
     pool_after_migration,
+    speed,
     summarize,
     ticket_net,
     verdict,
@@ -25,15 +27,21 @@ def test_trigger_waits_one_slot_and_buys_behind_that_slot():
     ph = curve_phase(p, 60.0)
     # the trade that crossed 60 SOL landed in slot +12; the ticket buys at the end of slot +13
     assert ph["why"] == "grad" and ph["entry_real"] == pytest.approx(64.0)
+    # it landed 3 s after the create; the curve then took 8 more slots to complete
+    assert (ph["trigger_s"], ph["trigger_slots"], ph["complete_slots"]) == (3, 12, 8)
+    assert speed(ph) == "fast" and speed({"why": "grad"}) == "unknown"
+    assert speed({**ph, "trigger_s": GS_MIN_TRIGGER_S}) == "slow"
     assert curve_phase(p, 50.0)["entry_real"] == pytest.approx(55.0)  # slot +11 is empty
     assert curve_phase(p, 86.0) is None  # never stood there
 
 
 def test_a_curve_that_completes_before_the_ticket_lands_is_a_jump():
     steps = [(0, 0, DEV, 1.0), (5, 1, A, 40.0), (9, 2, B, GRAD)]  # 40 -> complete in one buy
-    assert curve_phase(CurvePath(path_row(steps, complete_slot=9)), 60.0) == {"why": "jump"}
+    jump = {"why": "jump", "trigger_s": 2, "trigger_slots": 9}
+    assert curve_phase(CurvePath(path_row(steps, complete_slot=9)), 60.0) == jump
     steps = [(0, 0, DEV, 1.0), (5, 1, A, 61.0), (6, 2, B, GRAD)]  # completed in the slot after the trigger
-    assert curve_phase(CurvePath(path_row(steps, complete_slot=6)), 60.0) == {"why": "jump"}
+    jump = {"why": "jump", "trigger_s": 1, "trigger_slots": 5}
+    assert curve_phase(CurvePath(path_row(steps, complete_slot=6)), 60.0) == jump
 
 
 def test_a_curve_that_fails_is_sold_at_its_last_state():
@@ -43,7 +51,7 @@ def test_a_curve_that_fails_is_sold_at_its_last_state():
     assert ph["why"] == "fail" and ph["net"] == pytest.approx(expected, abs=1e-5)
     assert ph["net"] < -0.5  # bought 1.6x above the floor and the curve fell back
     trunc = curve_phase(CurvePath(path_row(steps, truncated=True)), 60.0)
-    assert trunc == {"why": "unresolved"}
+    assert trunc == {"why": "unresolved", "trigger_s": 1, "trigger_slots": 5}
 
 
 def _survivor(mint="M", liq0=84.87, base0=207.2e6 * 1e6, liq3=86.0, with_base=False, d5=None):
@@ -90,8 +98,9 @@ def test_summary_counts_tickets_and_keeps_the_confirmatory_sample_apart():
         if sampled(f"g{i}", G_SAMPLE_PER_10K):
             sigs.append(f"g{i}")
         i += 1
-    grad = {"why": "grad", "dt": 3.0e12, "entry_real": 61.0}
-    fail = {"why": "fail", "net": -0.8, "entry_real": 61.0}
+    # the graduates reached the level slowly, the failures within a minute of their create
+    grad = {"why": "grad", "dt": 3.0e12, "entry_real": 61.0, "trigger_s": GS_MIN_TRIGGER_S + 30}
+    fail = {"why": "fail", "net": -0.8, "entry_real": 61.0, "trigger_s": GS_MIN_TRIGGER_S - 30}
     results = []
     for n, sig in enumerate(sigs[:G_MIN_N]):
         ph = grad if n % 4 else fail  # 3 graduates for each failure
@@ -112,6 +121,14 @@ def test_summary_counts_tickets_and_keeps_the_confirmatory_sample_apart():
     assert pr["n"] == G_MIN_N  # the early launch is exploratory, the jump has no ticket
     assert pr["verdict"] in ("PASS", "INCONCLUSIVE", "KILL") and pr["mean"] > 0
     assert lv["cells"]["t3s"]["n"] == G_MIN_N + 1
+    sp = lv["by_speed"]
+    assert (sp["fast"]["reached"], sp["fast"]["fail"], sp["fast"]["grad"]) == (G_MIN_N // 4, G_MIN_N // 4, 0)
+    assert (sp["slow"]["reached"], sp["slow"]["grad"]) == (G_MIN_N * 3 // 4 + 1, G_MIN_N * 3 // 4 + 1)
+    assert sp["unknown"]["jump"] == 1 and sp["slow"]["t3s"]["n"] == G_MIN_N * 3 // 4 + 1
+    gs = out["prereg_gs"]
+    # GS keeps G's sample and criteria but only the slow triggers: 225 confirmatory graduates
+    assert gs["n"] == G_MIN_N * 3 // 4 and gs["verdict"] == "WAIT" and gs["min_trigger_s"] == GS_MIN_TRIGGER_S
+    assert gs["mean"] > pr["mean"]
 
 
 def test_verdict_rules():
@@ -120,3 +137,30 @@ def test_verdict_rules():
     assert verdict({**base, "mean_ci95": [-0.2, -0.01]}, [1, 1]) == "KILL"
     assert verdict({**base, "mean_ci95": [0.01, 0.3]}, [0.1, 0.05]) == "PASS"
     assert verdict({**base, "mean_ci95": [0.01, 0.3]}, [0.1, -0.05]) == "INCONCLUSIVE"
+
+
+def test_gs_is_judged_once_on_its_first_tickets():
+    sigs, i = [], 0
+    while len(sigs) < G_MIN_N + 50:
+        if sampled(f"s{i}", G_SAMPLE_PER_10K):
+            sigs.append(f"s{i}")
+        i += 1
+    results = []
+    for n, sig in enumerate(sigs):
+        # the first 300 slow tickets win half their stake, the 50 after them lose everything
+        ph = {"why": "fail", "net": 0.5 if n < G_MIN_N else -1.0, "trigger_s": GS_MIN_TRIGGER_S}
+        g = {"50": ph, "60": ph, "70": ph}
+        results.append({"mint": f"m{n}", "signature": sig, "t0": PREREG_G_TS + n, "g": g})
+    out = summarize(results, [])
+    gs = out["prereg_gs"]
+    assert (gs["n"], gs["n_after"], gs["judged_until"]) == (G_MIN_N, 50, PREREG_G_TS + G_MIN_N - 1)
+    assert gs["mean"] == pytest.approx(0.5) and gs["robust_means"] == [pytest.approx(0.5)] * 2
+    assert gs["verdict"] == "PASS" and gs["exit_waiting"] == 0
+    # G reads every ticket so far
+    assert out["prereg"]["n"] == G_MIN_N + 50 and out["prereg"]["mean"] < 0.5
+    # a graduate among the first 300 whose pool row is not in yet holds the verdict back
+    pending = {"why": "grad", "dt": 3.0e12, "trigger_s": GS_MIN_TRIGGER_S}
+    results[10]["g"] = {**results[10]["g"], "60": pending}
+    gs = summarize(results, [])["prereg_gs"]
+    assert (gs["verdict"], gs["exit_waiting"], gs["judged_until"]) == ("WAIT", 1, PREREG_G_TS + G_MIN_N - 1)
+    assert gs["n"] == G_MIN_N - 1

@@ -23,6 +23,13 @@ sale (the fills model's T+0 entry state), or, as a variant, at T+5 min (after BO
 harvested before the fills cells carried the pool's token reserve at entry approximate it from
 the opening state with a constant product, which understates the price if BOOST's buys come out
 of the virtual reserve (the sale is then valued low, not high).
+
+Hypothesis GS (section 9), registered after a closer look at the same exploration data: 30% of
+those curves completed within a minute of their create (343 of 1,783 within 2 s, bundles an
+outsider cannot enter), curves already at >= 60 SOL at t0+60 s that had not completed lost 38.5%
+on average, and curves that reached 60 SOL later had a mean of +8.6% [+4.5, +12.7] per ticket. GS
+keeps G's ticket, sample and criteria and only takes triggers that landed >= 60 s after the
+create; it is judged once, on its first 300 tickets.
 """
 
 import math
@@ -44,6 +51,10 @@ G_SAMPLE_PER_10K = 500
 G_MIN_N = 300
 # PumpSwap canonical pool under 420 SOL market cap: lp, protocol, creator (bps)
 DEFAULT_POOL_FEES = (2, 93, 30)
+# Hypothesis GS (docs/SNIPER.md section 9): G's tickets whose trigger landed at least a minute after
+# the create (block time), judged on G's confirmatory sample with G's criteria.
+GS_MIN_TRIGGER_S = 60
+SPEEDS = ("fast", "slow", "unknown")
 
 
 def level_key(level: float) -> str:
@@ -53,26 +64,29 @@ def level_key(level: float) -> str:
 def curve_phase(
     p: CurvePath, level: float, size: float = G_SIZE, latency: int = G_LATENCY_SLOTS
 ) -> dict[str, Any] | None:
-    """The ticket's curve phase, or None when the curve never stood at `level` SOL real."""
+    """The ticket's curve phase, or None when the curve never stood at `level` SOL real. Every
+    phase carries how long after the create the trigger landed (`trigger_s`, block time;
+    `trigger_slots`), and a graduate how many slots the curve then took to complete."""
     target = p.v_sol0 + level * LAMPORTS
     j = next((i for i, v in enumerate(p.vs) if v >= target), None)
     if j is None:
         return None
+    timing = {"trigger_s": p.ts[j] - p.t0, "trigger_slots": p.slots[j] - p.s0}
     entry_slot = p.slots[j] + latency
     if p.complete_slot is not None and p.complete_slot <= entry_slot:
-        return {"why": "jump"}
+        return {"why": "jump", **timing}
     if p.known_slot is not None and entry_slot > p.known_slot:
-        return {"why": "unresolved"}
+        return {"why": "unresolved", **timing}
     i0 = p.last_by_slot(entry_slot)
     vs, vt = p.vs[i0], p.vt[i0]
     spend = size * LAMPORTS
     net_in = spend / (1 + p.fee)
     dt = vt * net_in / (vs + net_in)
-    out: dict[str, Any] = {"entry_real": round((vs - p.v_sol0) / LAMPORTS, 4), "dt": dt}
+    out: dict[str, Any] = {"entry_real": round((vs - p.v_sol0) / LAMPORTS, 4), "dt": dt, **timing}
     if p.complete_slot is not None:
-        return {**out, "why": "grad"}
+        return {**out, "why": "grad", "complete_slots": p.complete_slot - p.slots[j]}
     if p.truncated:
-        return {"why": "unresolved"}
+        return {"why": "unresolved", **timing}
     proceeds = p.value(len(p.vs) - 1, dt) / LAMPORTS
     return {**out, "why": "fail", "net": round((proceeds - FIXED_COST_SOL) / size - 1, 5)}
 
@@ -162,34 +176,108 @@ def verdict(st: dict[str, Any], robust_means: Sequence[float | None]) -> str:
     return "INCONCLUSIVE"
 
 
+def speed(phase: dict[str, Any]) -> str:
+    """Return "slow" when the trigger landed at least GS_MIN_TRIGGER_S after the create, "fast"
+    before, and "unknown" for phases recorded before the trigger time was kept."""
+    t = phase.get("trigger_s")
+    if t is None:
+        return "unknown"
+    return "slow" if t >= GS_MIN_TRIGGER_S else "fast"
+
+
+def _kinds(phases: Sequence[dict[str, Any]]) -> dict[str, int]:
+    whys = [ph["why"] for ph in phases]
+    return {w: whys.count(w) for w in ("grad", "fail", "jump", "unresolved")}
+
+
+# a confirmatory ticket: (launch time, signature, net or None while the exit is pending)
+Ticket = tuple[float, str, float | None]
+Tickets = dict[str, list[Ticket]]
+
+
+def _nets(tickets: Sequence[Ticket]) -> list[float]:
+    return [v for _, _, v in tickets if v is not None]
+
+
+def _in_launch_order(tickets: Sequence[Ticket]) -> list[Ticket]:
+    return sorted(tickets, key=lambda t: (t[0], t[1]))
+
+
+def _prereg(tickets: Tickets, fixed_n: bool = False, **extra: Any) -> dict[str, Any]:
+    """Verdict on confirmatory tickets per level. G reads every resolved ticket so far. GS
+    (`fixed_n`) is judged once: on the first G_MIN_N tickets at the primary level in launch order,
+    with the robustness levels cut at the launch time of the last of them, and only once none of
+    those tickets still waits for its exit (a graduate's pool row comes a day later)."""
+    primary = _in_launch_order(tickets[level_key(G_PRIMARY)])
+    others = {x: _in_launch_order(tickets[level_key(x)]) for x in G_LEVELS if x != G_PRIMARY}
+    after: dict[str, Any] = {}
+    if fixed_n and len(primary) >= G_MIN_N:
+        cutoff = primary[G_MIN_N - 1][0]
+        others = {x: [t for t in v if t[0] <= cutoff] for x, v in others.items()}
+        waiting = sum(v is None for _, _, v in primary[:G_MIN_N])
+        waiting += sum(v is None for t in others.values() for _, _, v in t)
+        after = {"n_after": len(primary) - G_MIN_N, "judged_until": cutoff, "exit_waiting": waiting}
+        primary = primary[:G_MIN_N]
+    st = _stats(_nets(primary))
+    robust = [_stats(_nets(others[x])).get("mean") for x in others]
+    judged = verdict(st, robust)
+    if after.get("exit_waiting"):
+        judged = "WAIT"
+    return {
+        "since": PREREG_G_TS,
+        "level": G_PRIMARY,
+        "exit": G_EXITS[0],
+        "size": G_SIZE,
+        "min_n": G_MIN_N,
+        **extra,
+        "robust_levels": list(others),
+        "robust_means": robust,
+        **st,
+        **after,
+        "verdict": judged,
+    }
+
+
 def summarize(results: Sequence[dict[str, Any]], survivor_rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Every level x exit on classic launches, and G's verdict on its confirmatory sample."""
+    """Every level x exit on classic launches, split by how fast the curve reached the level, and
+    the verdicts of G and GS on their confirmatory sample."""
     exits = {r.get("mint"): r for r in latest_by_mint(survivor_rows)}
     launches: dict[str, dict[str, Any]] = {}
     for r in results:
         if r.get("g") is not None and not r.get("mayhem"):
             launches[r["mint"]] = r
     table: dict[str, dict[str, Any]] = {}
-    conf_nets: dict[str, list[float]] = {}
+    conf_nets: Tickets = {}
+    conf_slow: Tickets = {}
     for x in G_LEVELS:
         key = level_key(x)
         reached = [r for r in launches.values() if (r["g"] or {}).get(key)]
-        whys = [r["g"][key]["why"] for r in reached]
-        kinds = {w: whys.count(w) for w in ("grad", "fail", "jump", "unresolved")}
+        kinds = _kinds([r["g"][key] for r in reached])
         waiting = sum(1 for r in reached if r["g"][key]["why"] == "grad" and r["mint"] not in exits)
-        cells = {}
+        cells: dict[str, Any] = {}
+        by_speed: dict[str, Any] = {}
         for when in G_EXITS:
             outcomes = [(r, ticket_net(r["g"][key], exits.get(r["mint"]), when)) for r in reached]
             nets = [v for _, v in outcomes if v is not None]
             cells[when] = _stats(nets)
             if when == G_EXITS[0]:
-                conf_nets[key] = [
-                    v
+                # tickets of the confirmatory sample, a graduate whose pool row is not in yet as None
+                conf = [
+                    (r["t0"], r.get("signature") or "", v, r["g"][key])
                     for r, v in outcomes
-                    if v is not None
+                    if r["g"][key]["why"] in ("grad", "fail")
                     and r["t0"] >= PREREG_G_TS
                     and sampled(r.get("signature") or "", G_SAMPLE_PER_10K)
                 ]
+                conf_nets[key] = [(t0, sig, v) for t0, sig, v, _ in conf if v is not None]
+                conf_slow[key] = [(t0, sig, v) for t0, sig, v, ph in conf if speed(ph) == "slow"]
+                for sp in SPEEDS:
+                    sub = [(r, v) for r, v in outcomes if speed(r["g"][key]) == sp]
+                    by_speed[sp] = {
+                        "reached": len(sub),
+                        **_kinds([r["g"][key] for r, _ in sub]),
+                        G_EXITS[0]: _stats([v for _, v in sub if v is not None]),
+                    }
         tickets = kinds["grad"] + kinds["fail"]
         table[key] = {
             "reached": len(reached),
@@ -197,20 +285,10 @@ def summarize(results: Sequence[dict[str, Any]], survivor_rows: Sequence[dict[st
             "exit_waiting": waiting,
             "p_grad_given_ticket": kinds["grad"] / tickets if tickets else None,
             "cells": cells,
+            "by_speed": by_speed,
         }
-    st = _stats(conf_nets[level_key(G_PRIMARY)])
-    robust = [_stats(conf_nets[level_key(x)]).get("mean") for x in G_LEVELS if x != G_PRIMARY]
     return {
         "levels": table,
-        "prereg": {
-            "since": PREREG_G_TS,
-            "level": G_PRIMARY,
-            "exit": G_EXITS[0],
-            "size": G_SIZE,
-            "min_n": G_MIN_N,
-            "robust_levels": [x for x in G_LEVELS if x != G_PRIMARY],
-            "robust_means": robust,
-            **st,
-            "verdict": verdict(st, robust),
-        },
+        "prereg": _prereg(conf_nets),
+        "prereg_gs": _prereg(conf_slow, fixed_n=True, min_trigger_s=GS_MIN_TRIGGER_S),
     }
