@@ -8,6 +8,7 @@ Tài liệu gồm năm phần:
 3. Phép đo của dự án trên 77 nghìn launch tháng 9/2026.
 4. Bộ dữ liệu forward chính xác tới từng slot, đang được ghi.
 5. **Giả thuyết S**, cố định trước khi có dữ liệu kiểm định.
+6. **Giả thuyết G và GS** (mua curve đã có 60 SOL, bán ngay sau migration), cũng cố định trước.
 
 Mã tương ứng nằm ở `bot/app/sniper.py`. Kết quả xem ở dashboard (mục "Sniper") và ở `/api/sniper/summary`.
 
@@ -54,6 +55,11 @@ Kết quả gần như nhau trên cả ba ngày.
 
 **6. Giả thuyết S (mục 7) kiểm định lại trên dữ liệu forward chính xác tới từng slot.**
 Luật thoát nhanh (chốt x2 / cắt lỗ 50% / bán sau 60 giây) không mô phỏng được bằng dữ liệu theo launch.
+
+**7. Giả thuyết G và GS (mục 8, 9): mua curve đã có 60 SOL thật, bán 3 giây sau migration.**
+- Trên dữ liệu thăm dò, G trông như +21% mỗi vé. Nhưng 30% tập đó là curve hoàn tất ngay trong phút đầu (phần lớn là bundle trong 2 giây đầu), người ngoài không vào kịp.
+- Bỏ phần đó đi: curve chạm 60 SOL sau giây thứ 60 có trung bình +8,6% (KTC 95% +4,5…+12,7%). Curve đã ở 60 SOL lúc giây 60 mà chưa hoàn tất thì −38,5%.
+- GS chỉ lấy loại curve chậm. Cả G và GS thu dữ liệu kiểm định từ 03:00 UTC ngày 07/10.
 
 ## 1. Cơ chế (10/2026)
 
@@ -384,6 +390,21 @@ Mỗi mint chỉ tính một lần.
 
 Mức 80 SOL gần như hết lãi. Nhiều khả năng bot đã đua ở đó.
 
+**Cập nhật thăm dò sau đăng ký** (07/10, cùng dữ liệu 27–29/9; luật G giữ nguyên). Tách 1.783 curve chạm 60 SOL theo tốc độ, vào ở 61 SOL, giá thoát trung bình 1,04×:
+
+| Nhóm | n | Tốt nghiệp | Trung bình mỗi vé |
+|---|---|---|---|
+| Hoàn tất trong 60 giây đầu sau lệnh tạo (343 cái trong 2 giây đầu) | 529 | 100% | +61,8% |
+| Đã ≥ 60 SOL ở giây 60 nhưng chưa hoàn tất | 65 | 34% | −38,5% (KTC −56,1…−20,9%) |
+| Chạm 60 SOL sau giây 60 | 1.189 | 65% | +8,6% (KTC +4,5…+12,7%) |
+
+- Nhóm đầu gần như chắc chắn là "jump" với người ngoài: curve được lấp đầy bởi bundle ngay khi tạo. Con số +21% ở trên vì vậy bị thổi phồng.
+- Bỏ nhóm đầu, kỳ vọng của G còn khoảng +5% đến +12%, tuỳ phần nào của các curve hoàn tất trong giây 10–60 vào được.
+- Mua ở một mốc giờ cố định cũng không cứu được: lúc t0+60 giây curve đang ở 60–70 SOL thì trung bình −42% (n=37).
+- Giá 3 giây sau migration của các curve tốt nghiệp sau hơn 10 giây (dev mua < 79 SOL; 341 token ngày 4–5/10): trung vị 1,02×, trung bình 1,12×.
+- Ở nhóm chậm, các đặc trưng biết được lúc kích hoạt (dev mua, lịch sử creator, holder reward, tỷ trọng insider, giờ trong ngày) chỉ xê dịch trung bình trong biên nhiễu. Không thêm điều kiện nào.
+- Nhóm chậm vẫn dương khi giả định xấu hơn: trượt 3 SOL và giá thoát 1,02× cho +6,0% (KTC +2,1…+9,8%), giá thoát 1,00× cho +4,5%. Ở 50 SOL: +8,9%; ở 70 SOL: +2,2%.
+
 **Điều chưa biết, và là lý do phải kiểm định:**
 - Người ngoài có vào kịp không: curve có thể nhảy qua X trong một lệnh, hoặc hoàn tất ngay trong slot kế tiếp.
 - Những curve thất bại rơi về đâu.
@@ -413,6 +434,7 @@ Mức 80 SOL gần như hết lãi. Nhiều khả năng bot đã đua ở đó.
 
 **Báo kèm, không kiểm định:**
 - tỷ lệ "jump";
+- tách theo tốc độ (`by_speed`: kích hoạt trước hay sau giây 60 kể từ lệnh tạo; `trigger_s`, `trigger_slots`, và với curve tốt nghiệp là số slot tới khi hoàn tất);
 - xác suất tốt nghiệp khi đã có vé;
 - lối thoát lúc 5 phút sau migration (`t5m`, sau BOOST);
 - các mức 50 và 70 SOL.
@@ -426,6 +448,37 @@ Mức 80 SOL gần như hết lãi. Nhiều khả năng bot đã đua ở đó.
 **Kết luận nghĩa là gì.**
 - KILL: lợi thế đo được trong lịch sử là ảo, vì không vào kịp, vì curve thất bại, hoặc vì giá sau migration không giữ.
 - PASS: đáng đo tiếp ở quy mô lớn hơn. Dự án vẫn không giao dịch thật (Nghị định 284/2026).
+
+## 9. Giả thuyết GS: G chỉ với curve chậm (đăng ký trước, 07/10/2026)
+
+**Luật.**
+- Giống hệt G: mức 60 SOL, trễ 1 slot, 0,5 SOL, thoát 3 giây sau migration, cùng mẫu kiểm định và cùng mốc `PREREG_G_TS`.
+- Thêm đúng một điều kiện: giao dịch kích hoạt nằm ít nhất 60 giây (block time) sau lệnh tạo (`GS_MIN_TRIGGER_S = 60`).
+
+**Vì sao.** Theo phần cập nhật thăm dò ở mục 8:
+- Curve chạm 60 SOL trong phút đầu hoặc hoàn tất ngay, người ngoài không vào được, hoặc thường sụp (−38,5%).
+- Curve chậm hơn có trung bình +8,6%, ở cả hai nửa thời gian (+6,0% và +11,2%).
+- Dữ liệu thăm dò chỉ có trạng thái curve ở giây 10 và giây 60. Chỉ ngưỡng 60 giây được thử, không dò qua nhiều ngưỡng.
+
+**Mẫu kiểm định.** Các vé của G trong mẫu kiểm định của G có `trigger_s ≥ 60`. Kết quả ở `/api/graduation/summary` → `prereg_gs`.
+
+**Phán quyết đúng một lần.**
+- Phán quyết dựa trên 300 vé đầu tiên ở 60 SOL, xếp theo thời điểm tạo launch.
+- Hai mức kiểm tra độ vững (50 và 70 SOL, cùng điều kiện) lấy các vé có thời điểm tạo không muộn hơn vé thứ 300.
+- Phán quyết chỉ được đọc khi không vé nào trong số đó còn chờ lối thoát (vé tốt nghiệp nhưng pool chưa được harvest, `exit_waiting`). Trước đó kết quả là WAIT.
+- Vé đến sau vẫn được báo (`n_after`) nhưng không đổi phán quyết. Cách này tránh việc nhìn kết quả nhiều lần cho tới khi gặp PASS.
+
+**Tiêu chí.** Như G:
+- **KILL** nếu cận trên KTC 95% của trung bình < 0, hoặc 1% vé tốt nhất chiếm ≥ 50% tổng lãi.
+- **PASS** nếu cận dưới > 0, và trung bình ở 50 và 70 SOL > 0.
+- Còn lại: INCONCLUSIVE.
+
+**Kỳ vọng.**
+- Hiệu ứng nhỏ. Độ lệch chuẩn mỗi vé khoảng 0,6, nên 300 vé cho KTC khoảng ±7%. PASS cần trung bình thật cỡ +7% trở lên; INCONCLUSIVE là kết cục khá có thể.
+- Mẫu 5% cho khoảng 20 vé GS mỗi ngày, tức phán quyết sau khoảng 15 ngày.
+- Không thể nới mẫu: ngân sách Helius (10 triệu credit mỗi tháng) đã gần hết cho fills và census.
+
+**Không được làm.** Như G. Thêm: không đổi ngưỡng 60 giây, không đổi thứ tự hay số vé dùng để phán quyết.
 
 ## Nguồn
 

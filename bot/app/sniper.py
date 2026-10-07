@@ -195,6 +195,7 @@ class CurvePath:
         self.vt = [float(t[cols["v_tokens"]]) for t in tr]
         c = row.get("complete")
         self.complete_slot = int(c["slot"]) if c else None
+        self.complete_ts = int(c["ts"]) if c and c.get("ts") is not None else None
         bps = row.get("fee_bps") or DEFAULT_FEE_BPS
         self.fee = (bps if 50 <= bps <= 500 else DEFAULT_FEE_BPS) / 10_000
         win = row.get("window") or {}

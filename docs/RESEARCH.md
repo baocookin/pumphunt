@@ -6,6 +6,13 @@ Tài liệu này tóm tắt những gì tìm được, kết luận chiến lư�
 
 Nghiên cứu riêng về snipe token mới, phép đo trên 77.043 launch tháng 9/2026, bộ dữ liệu forward chính xác tới slot, và giả thuyết S đăng ký trước: [`SNIPER.md`](SNIPER.md). Kết luận chính: trên cùng các launch, vé đứng ngay sau lệnh mua của dev có EV +12% (KTC 95% +10,9…+13,2%), vé vào ~1 giây sau có EV −8% (−8,1…−7,7%), không bộ lọc đơn giản nào đổi dấu; vị trí có lãi là vị trí bundle của người tạo token.
 
+## Giả thuyết G và GS (07/10/2026)
+
+Mua một bonding curve đã có 60 SOL thật, giữ tới khi tốt nghiệp, bán 3 giây sau migration ([`SNIPER.md`](SNIPER.md), mục 8–9).
+- Trên dữ liệu thăm dò, 30% số curve chạm 60 SOL đã hoàn tất ngay trong phút đầu (phần lớn là bundle trong 2 giây). Người ngoài không vào kịp, nên kỳ vọng +21% ban đầu bị thổi phồng.
+- Curve chạm 60 SOL sau giây 60: +8,6% mỗi vé (KTC +4,5…+12,7%), dương ở cả hai nửa thời gian. Đây là GS, đăng ký thêm với cùng mẫu kiểm định của G, phán quyết một lần trên 300 vé đầu.
+- Mua ngay sau migration rồi bán lúc T+5 phút (ăn theo lệnh mua lại của BOOST): −5,7% (KTC −10,0…−1,4%, 725 token ngày 4–5/10). Người nắm token từ curve xả vào lệnh mua của BOOST.
+
 ## Thăm dò luật đặc trưng (06/10/2026, trước cửa sổ thăm dò)
 
 **Dữ liệu dùng để thăm dò:**
