@@ -193,6 +193,13 @@ class CurvePath:
         self.ts = [int(t[cols["ts"]]) for t in tr]
         self.vs = [float(t[cols["v_sol"]]) for t in tr]
         self.vt = [float(t[cols["v_tokens"]]) for t in tr]
+        # who traded, for features at a decision time (graduation.trigger_features)
+        self.users = [t[cols["user"]] for t in tr]
+        self.buys = [bool(t[cols["buy"]]) for t in tr]
+        self.sols = [int(t[cols["sol"]]) for t in tr]
+        self.toks = [int(t[cols["tokens"]]) for t in tr]
+        self.dev, self.creator = row.get("dev"), row.get("creator")
+        self.supply = int(row.get("supply") or 0)
         c = row.get("complete")
         self.complete_slot = int(c["slot"]) if c else None
         self.complete_ts = int(c["ts"]) if c and c.get("ts") is not None else None
@@ -553,6 +560,15 @@ class SniperRecorder:
         token = None
         t_to = row["create_ts"] + cfg.sniper_window_s
         short = False  # the previous page held fewer than asked
+        capped = False
+        # Helius hands out a pagination token even after the last page (920 of 920 curve reads),
+        # and a page shorter than asked has always been the last one (short_then_more = 0 over
+        # 2,017 reads, 07/10/2026). So the read stops after a short page, which saves the empty
+        # call (~10 of a quiet curve's ~21 credits), except on an audit sample that keeps reading
+        # and keeps the count honest.
+        audit = sampled("page-audit:" + signature, cfg.sniper_page_audit_per_10k)
+        # one audited read that finds data after a short page switches the shortcut off for the run
+        stop_on_short = cfg.sniper_stop_on_short_page and not audit and not self.stats["short_then_more"]
         while True:
             limit = 100 if not txs else 1000
             res = await f.history_page(
@@ -565,15 +581,15 @@ class SniperRecorder:
                 token=token,
             )
             data = res.get("data") or []
-            # Helius hands out a pagination token even after the last page (measured: 920 of 920
-            # curve reads). Whether a short page is always the last one decides if that extra
-            # call can be skipped; until it is shown, the read goes on and counts the cases.
             if short:
                 self.stats["short_then_more" if data else "short_then_empty"] += 1
-            short = len(data) < limit
+            short = len(data) < int(res.get("asked") or limit)
             txs.extend(data)
             token = res.get("paginationToken")
-            if not token or not data or len(txs) >= cfg.sniper_max_tx:
+            if not token or not data or (short and stop_on_short):
+                break
+            if len(txs) >= cfg.sniper_max_tx:
+                capped = True
                 break
         path = curve_trades(txs, row["mint"])
         credits += f.credits - spent
@@ -582,7 +598,7 @@ class SniperRecorder:
         row["window"] = {
             "span_s": cfg.sniper_window_s,
             "tx": len(txs),
-            "truncated": bool(token) and len(txs) >= cfg.sniper_max_tx,
+            "truncated": capped,
             "last_slot": int(last.get("slot") or 0),
             "last_ts": int(last.get("blockTime") or 0),
         }

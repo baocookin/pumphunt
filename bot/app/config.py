@@ -92,11 +92,11 @@ class Settings(BaseSettings):
     fills_token_filter: bool = True  # try Helius' tokenTransfer filter; used only once verified
     fills_max_pages: int = 40  # signature pages (1,000 each), only without getTransactionsForAddress
     # RPC credits all research reads (fills, curve history, holders, funding) may spend per UTC
-    # day; the harvester pauses until the next day once reached. Measured: ~90 credits per token
-    # on average (06/10/2026), ~1,200 graduates a day; the cap binds only while a backlog drains.
-    # With the sniper sample's 90k this is 300k/day at most, ~9M/month, inside the Developer
-    # plan's 10M with room for the recorder itself (~5k/day).
-    fills_daily_credits: int = 210_000
+    # day; the harvester pauses until the next day once reached. Measured on 07/10/2026: ~218
+    # credits per SOL-quoted migration (busy C2 pools ~450), 1,250-1,300 migrations a day, so the
+    # cap binds every day and the backlog grows. With the census's 65k this is 300k/day at most,
+    # ~9M/month, inside the Developer plan's 10M with room for the recorder itself (~5k/day).
+    fills_daily_credits: int = 235_000
     fill_sizes_sol: list[float] = [0.5, 1, 2, 5]
     fill_tx_fee_sol: float = 0.001  # base + priority fee per transaction, two per round trip
     fill_latency_s: float = 3  # decision to landed transaction
@@ -133,7 +133,12 @@ class Settings(BaseSettings):
     sniper_window_s: int = 7_200
     sniper_delay_s: int = 300  # read this long after the window closed (finalized, indexed)
     sniper_max_tx: int = 5_000  # transactions read per curve at most (500 credits)
-    sniper_daily_credits: int = 90_000
+    # stop a curve read after a page shorter than asked (it has always been the last one), except
+    # on an audit sample (independent hash) that reads on and counts short_then_more
+    sniper_stop_on_short_page: bool = True
+    sniper_page_audit_per_10k: int = 200
+    # ~79k/day while every read paid an empty last page; ~56k/day without it (5% sample)
+    sniper_daily_credits: int = 65_000
     sniper_census_max_pages: int = 30  # after a restart: up to ~12 h of launches listed again
     sniper_poll_s: float = 60
     sniper_batch: int = 20

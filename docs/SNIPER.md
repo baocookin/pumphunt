@@ -272,13 +272,17 @@ Vì vậy, các số âm ở trên là **cận trên** cho người ngoài: th�
 Hai giờ sau khi launch:
 - Đọc lệnh tạo (1 credit) để biết mint, curve, quote, mayhem.
 - Nếu quote là SOL: đọc mọi tx thành công của curve trong 2 giờ đó, cũ nhất trước, bằng Helius `getTransactionsForAddress` (10 credit/100 tx, tối đa 5.000 tx).
+- Helius luôn trả token phân trang, kể cả sau trang cuối. Trên 2.017 lượt đọc (07/10), mọi trang ngắn hơn số tx yêu cầu đều là trang cuối. Vì vậy từ 08/10 việc đọc dừng ngay sau một trang ngắn, bỏ được lần gọi rỗng (khoảng 10 trong ~21 credit của một curve vắng).
+  - 2% lượt đọc (băm độc lập) vẫn đọc tiếp để kiểm tra (`short_then_more`, `short_then_empty`). Chỉ cần một lần thấy dữ liệu sau trang ngắn là lối tắt tự tắt cho cả lần chạy.
+  - Một trang bị chia đôi vì lỗi 413 được so với kích thước đã thực sự yêu cầu, nên không bị coi là trang cuối.
+  - Dữ liệu đọc được không đổi, nên kết quả mô phỏng không đổi (`SIM_VERSION` giữ nguyên).
 - Mỗi trade event giữ: slot, vị trí trong block, ví, mua/bán, số SOL, số token, reserve ảo sau lệnh, tên lệnh.
 - Reserve phải nối liền từ lệnh này sang lệnh kế. Nếu đứt, tức là thiếu lệnh, và dòng đó được đánh dấu.
 - Cửa sổ 2 giờ chứa 95% số lần tốt nghiệp mà sniper vào kịp.
 
 **Ngân sách**
-- Tối đa 90.000 credit/ngày (`PH_SNIPER_DAILY_CREDITS`; lúc đầu 20.000, rồi 30.000 sau khi đo được một curve sôi động tốn ~140 credit cho 1.200 tx, rồi 90.000 khi mẫu lên 5% cho G).
-- Ngân sách fills của giả thuyết C giảm từ 300.000 xuống 210.000 (ở trạng thái ổn định fills dùng ~120.000/ngày), nên trần tổng vẫn 300.000.
+- Tối đa 65.000 credit/ngày (`PH_SNIPER_DAILY_CREDITS`). Lịch sử: lúc đầu 20.000; lên 30.000 sau khi đo được một curve sôi động tốn ~140 credit cho 1.200 tx; lên 90.000 khi mẫu lên 5% cho G; xuống 65.000 từ 08/10 vì bỏ trang rỗng (census 5% dùng ~79.000/ngày khi còn trang rỗng, ước ~56.000 khi bỏ).
+- Ngân sách fills của giả thuyết C: 210.000 rồi 235.000 từ 08/10. Ngày 07/10, mỗi migration quote SOL tốn ~218 credit (pool C2 đông giao dịch ~450), với 1.250–1.300 migration/ngày. Trần 210.000 bị chạm mỗi ngày và hàng chờ harvest dài thêm. Trần tổng vẫn 300.000.
 - Hết ngân sách trong ngày thì launch chờ tới ngày sau mới được đọc, không bị bỏ khỏi mẫu.
 
 **Lưu trữ**
