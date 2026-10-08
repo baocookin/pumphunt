@@ -1,0 +1,60 @@
+Five-laws sieve test, registered BEFORE any outcome was computed (only feature distributions seen).
+Written: 2026-10-07 (UTC, see file mtime).
+
+Population P(D): classic launches in the census, D in {120, 300, 600} s, not complete by the entry
+slot, >= 1 trade in the 60 s before the decision slot. Decision slot = s0 + round(D/0.269).
+Features use trades up to the decision slot; entry at the end of the decision slot + 1.
+Ticket 0.5 SOL, 1.25% fee per side (row fee_bps), 0.002 SOL fixed. Exits: a = 10 min after entry,
+b = 30 min after entry, c = hold to graduation (valued at the completing trade's curve state) or
+the end of the 2 h window. Graduation inside a/b's horizon values the ticket at graduation.
+
+TRAP (primary): net at exit b <= -0.50.  Secondary reported: net at a <= -0.50, net at c <= -0.50.
+
+Flags (thresholds fixed now):
+ F1 dev_hold   dev(+creator) net share of supply >= 3%
+ F2 top1       largest net holder >= 5% of supply
+ F3 top10      ten largest net holders >= 20% of supply
+ F4 insiders   dev, creator, buyers in slots s0 and s0+1: net share >= 5%
+ F5 thin       unique non-dev buyers < 15
+ F6 net_sell   last 60 s: sell SOL > buy SOL
+ F7 crew       >= 2 wallets with >= 3 sells each, of which >= max(0.8, c+0.3) land within 3 slots
+               after another wallet's buy (c = share of slots in the last 5 min within 3 slots after
+               any buy), and those wallets' sells >= 25% of sell SOL in the last 5 min
+ F8 wash       wallets with >= 3 side switches hold >= 30% of gross SOL volume
+ F9 dev_sold   dev or creator has sold
+ F10 low       real SOL < 5
+ F11 stalled   real SOL change over the last 60 s <= 0
+ F12 spike     real SOL rose >= 10 SOL in the last 60 s
+ F13 flippers  >= 8 wallets sold within 5 slots of their own buy
+ F14 rt_slot   >= 2 (wallet, slot) pairs with both a buy and a sell in the same slot
+
+Combinations (reject if any member flag fires), all reported:
+ A  law3_core   F1|F2|F3|F4|F7|F8|F9|F14
+ B  law3+flow   A|F5|F6|F11
+ C  everything  F1..F14
+ D  momentum    F10|F11            (control: no Law-3 flag at all)
+ E  momentum+A  D|A
+
+Crux: mean net of the remainder (exits a, b, c) with 95% bootstrap CI, both time halves.
+Multiple testing: 14 flags x 3 D x 3 exits, 5 combos x 3 D x 3 exits; no correction applied to the
+flag table (descriptive); a remainder counts as positive only if CI excludes 0 AND both halves > 0.
+
+--- Addendum (loopholetape, registered before its outcomes were computed; distributions seen) ---
+Population: classic SOL, decoder_complete=1, tape_replay, resolved, f60 snapshot present, no silence
+in 60 s, create lag <= 1 s, not migrated before the snapshot. n = 72,563 (27-29/09). Traction
+subpopulation: f60_rs >= 5 (n = 12,663). NB the "f60" snapshot is at 10-60 s (median 10.6 s).
+Entry: 0.5 SOL at f60_rs (1.25% fee, 0.002 fixed). Exit: graduated -> at 85 SOL real (curve end);
+else terminal_rs. Trap: that hold net <= -0.50.  Also reported: rugged label.
+Flags: L1 insider60 f60_insider_share >= 0.10 | L2 dev10 f10_dev_share >= 0.05 | L3 bundle10
+f10_bundle_wallets >= 3 | L4 serial f10_rep_n >= 50 | L5 reprug f10_rep_rug >= 0.8 | L6 dev_sold
+dev_first_sell_dt_s <= f60_age | L7 low60 f60_rs < 5 | L8 falling f60_rs < f10_rs | L9 thin10
+f10_n_buys < 3.
+Combos: LA = L1..L6 ; LB = LA|L7|L8|L9 ; LC = L7|L8 (momentum control) ; LE = LC|LA.
+Halves by t0. Positive = CI excludes 0 and both halves > 0.
+
+--- Addendum 2 (migration rows, funding graph; registered before outcomes; EXPLORATORY sample 04-05/10) ---
+Population: rows with decision.d30 and fills; C2-like: d30 real_sol >= 10 and last trade <= 60 s; also
+all rows with funding. Outcome: fills d30_h60 (1 SOL) net (and d30_h1440). Trap: net <= -0.5.
+Flags: M1 fresh funding fresh_1d >= 3 | M2 cluster max_cluster >= 3 | M3 dev_linked >= 1 |
+M4 selfgrad curve.dev_buy_sol >= 80 | M5 bundle curve.bundle_buyers >= 3 | M6 cluster share
+cluster_hold_share >= 0.2. Combos: MA = M1|M2|M3|M6 (funding only); MB = MA|M4|M5.

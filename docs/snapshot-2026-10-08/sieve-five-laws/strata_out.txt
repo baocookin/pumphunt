@@ -1,0 +1,66 @@
+
+######## D=120s
+  real [ 0, 1) n=281 grads=0 | a10m mean -0.036 med -0.029 win 0.00 trap 0.00 | b30m mean -0.037 med -0.029 win 0.00 trap 0.00 | c_hold mean -0.038 med -0.029 win 0.00 trap 0.00 
+  real [ 1, 5) n=125 grads=0 | a10m mean -0.114 med -0.133 win 0.03 trap 0.00 | b30m mean -0.152 med -0.146 win 0.02 trap 0.00 | c_hold mean -0.152 med -0.146 win 0.02 trap 0.00 
+  real [ 5,13) n= 41 grads=0 | a10m mean -0.193 med -0.323 win 0.12 trap 0.02 | b30m mean -0.306 med -0.363 win 0.05 trap 0.02 | c_hold mean -0.362 med -0.384 win 0.02 trap 0.07 
+  real [13,30) n= 40 grads=3 | a10m mean -0.178 med -0.571 win 0.17 trap 0.65 | b30m mean -0.279 med -0.594 win 0.12 trap 0.75 | c_hold mean -0.227 med -0.615 win 0.10 trap 0.82 
+  real [30,86) n= 16 grads=7 | a10m mean +0.460 med +0.483 win 0.62 trap 0.25 | b30m mean +0.220 med -0.019 win 0.50 trap 0.44 | c_hold mean +0.060 med -0.716 win 0.44 trap 0.56 
+  -- traction stratum real>=5: n=97 base trap(b)=0.392 mean b -0.208 mean c -0.237
+    F1_dev_hold    nF= 23 nR= 74 trapF 0.48 trapR 0.36 meanF_b -0.390 meanR_b -0.152 meanF_c -0.398 meanR_c -0.186
+    F2_top1        nF= 34 nR= 63 trapF 0.35 trapR 0.41 meanF_b -0.110 meanR_b -0.261 meanF_c -0.193 meanR_c -0.260
+    F3_top10       nF= 72 nR= 25 trapF 0.47 trapR 0.16 meanF_b -0.215 meanR_b -0.191 meanF_c -0.245 meanR_c -0.211
+    F4_insiders    nF= 39 nR= 58 trapF 0.38 trapR 0.40 meanF_b -0.098 meanR_b -0.283 meanF_c -0.164 meanR_c -0.285
+    F5_thin        nF=  3 nR= 94 trapF 0.00 trapR 0.40 meanF_b +0.734 meanR_b -0.239 meanF_c +0.774 meanR_c -0.269
+    F6_net_sell    nF= 40 nR= 57 trapF 0.33 trapR 0.44 meanF_b -0.316 meanR_b -0.133 meanF_c -0.372 meanR_c -0.141
+    F7_crew        nF=  3 nR= 94 trapF 0.33 trapR 0.39 meanF_b -0.534 meanR_b -0.198 meanF_c -0.550 meanR_c -0.226
+    F8_wash        nF=  4 nR= 93 trapF 1.00 trapR 0.37 meanF_b -0.577 meanR_b -0.193 meanF_c -0.579 meanR_c -0.222
+    F9_dev_sold    nF= 50 nR= 47 trapF 0.40 trapR 0.38 meanF_b -0.250 meanR_b -0.164 meanF_c -0.284 meanR_c -0.186
+    F10_low        nF=0 nR=97
+    F11_stalled    nF= 40 nR= 57 trapF 0.33 trapR 0.44 meanF_b -0.316 meanR_b -0.133 meanF_c -0.372 meanR_c -0.141
+    F12_spike      nF= 10 nR= 87 trapF 0.70 trapR 0.36 meanF_b -0.325 meanR_b -0.195 meanF_c -0.332 meanR_c -0.226
+    F13_flippers   nF= 31 nR= 66 trapF 0.52 trapR 0.33 meanF_b -0.246 meanR_b -0.191 meanF_c -0.312 meanR_c -0.201
+    F14_rt_slot    nF= 17 nR= 80 trapF 0.47 trapR 0.38 meanF_b -0.163 meanR_b -0.218 meanF_c -0.179 meanR_c -0.249
+
+######## D=300s
+  real [ 0, 1) n=116 grads=0 | a10m mean -0.036 med -0.029 win 0.00 trap 0.00 | b30m mean -0.038 med -0.029 win 0.00 trap 0.00 | c_hold mean -0.038 med -0.030 win 0.02 trap 0.00 
+  real [ 1, 5) n= 36 grads=0 | a10m mean -0.059 med -0.099 win 0.14 trap 0.00 | b30m mean -0.104 med -0.114 win 0.08 trap 0.00 | c_hold mean -0.129 med -0.116 win 0.00 trap 0.00 
+  real [ 5,13) n= 20 grads=1 | a10m mean +0.011 med -0.259 win 0.20 trap 0.00 | b30m mean -0.155 med -0.285 win 0.05 trap 0.00 | c_hold mean +0.093 med -0.347 win 0.10 trap 0.00 
+  real [13,30) n= 21 grads=0 | a10m mean -0.392 med -0.597 win 0.10 trap 0.81 | b30m mean -0.456 med -0.613 win 0.10 trap 0.81 | c_hold mean -0.475 med -0.620 win 0.05 trap 0.81 
+  real [30,86) n= 14 grads=5 | a10m mean +0.288 med +0.292 win 0.64 trap 0.21 | b30m mean -0.036 med -0.613 win 0.36 trap 0.57 | c_hold mean -0.107 med -0.731 win 0.36 trap 0.64 
+  -- traction stratum real>=5: n=55 base trap(b)=0.455 mean b -0.240 mean c -0.175
+    F1_dev_hold    nF= 14 nR= 41 trapF 0.64 trapR 0.39 meanF_b -0.386 meanR_b -0.190 meanF_c -0.393 meanR_c -0.100
+    F2_top1        nF= 28 nR= 27 trapF 0.50 trapR 0.41 meanF_b -0.382 meanR_b -0.093 meanF_c -0.414 meanR_c +0.073
+    F3_top10       nF= 37 nR= 18 trapF 0.59 trapR 0.17 meanF_b -0.398 meanR_b +0.086 meanF_c -0.436 meanR_c +0.363
+    F4_insiders    nF= 15 nR= 40 trapF 0.47 trapR 0.45 meanF_b -0.228 meanR_b -0.244 meanF_c -0.228 meanR_c -0.154
+    F5_thin        nF=  4 nR= 51 trapF 0.00 trapR 0.49 meanF_b +0.342 meanR_b -0.285 meanF_c +0.347 meanR_c -0.215
+    F6_net_sell    nF= 26 nR= 29 trapF 0.31 trapR 0.59 meanF_b -0.196 meanR_b -0.279 meanF_c -0.032 meanR_c -0.302
+    F7_crew        nF=  5 nR= 50 trapF 0.60 trapR 0.44 meanF_b -0.513 meanR_b -0.212 meanF_c -0.602 meanR_c -0.132
+    F8_wash        nF= 11 nR= 44 trapF 0.64 trapR 0.41 meanF_b -0.434 meanR_b -0.191 meanF_c -0.487 meanR_c -0.096
+    F9_dev_sold    nF= 31 nR= 24 trapF 0.48 trapR 0.42 meanF_b -0.365 meanR_b -0.079 meanF_c -0.409 meanR_c +0.128
+    F10_low        nF=0 nR=55
+    F11_stalled    nF= 26 nR= 29 trapF 0.31 trapR 0.59 meanF_b -0.196 meanR_b -0.279 meanF_c -0.032 meanR_c -0.302
+    F12_spike      nF=  4 nR= 51 trapF 0.75 trapR 0.43 meanF_b -0.321 meanR_b -0.233 meanF_c -0.342 meanR_c -0.161
+    F13_flippers   nF= 24 nR= 31 trapF 0.54 trapR 0.39 meanF_b -0.323 meanR_b -0.175 meanF_c -0.388 meanR_c -0.009
+    F14_rt_slot    nF= 12 nR= 43 trapF 0.50 trapR 0.44 meanF_b -0.265 meanR_b -0.233 meanF_c -0.292 meanR_c -0.142
+
+######## D=600s
+  real [ 0, 1) n= 39 grads=0 | a10m mean -0.031 med -0.029 win 0.05 trap 0.00 | b30m mean -0.032 med -0.029 win 0.03 trap 0.00 | c_hold mean -0.035 med -0.029 win 0.03 trap 0.00 
+  real [ 1, 5) n= 21 grads=0 | a10m mean -0.099 med -0.093 win 0.00 trap 0.00 | b30m mean -0.112 med -0.106 win 0.05 trap 0.00 | c_hold mean -0.128 med -0.123 win 0.10 trap 0.00 
+  real [ 5,13) n=  9 grads=0 | a10m mean -0.217 med -0.330 win 0.11 trap 0.00 | b30m mean -0.352 med -0.349 win 0.00 trap 0.00 | c_hold mean -0.362 med -0.363 win 0.00 trap 0.00 
+  real [13,30) n= 13 grads=0 | a10m mean -0.139 med -0.299 win 0.46 trap 0.31 | b30m mean -0.322 med -0.512 win 0.15 trap 0.54 | c_hold mean -0.380 med -0.582 win 0.08 trap 0.77 
+  real [30,86) n=  9 grads=2 | a10m mean -0.227 med -0.193 win 0.44 trap 0.22 | b30m mean -0.472 med -0.711 win 0.22 trap 0.56 | c_hold mean -0.285 med -0.755 win 0.22 trap 0.67 
+  -- traction stratum real>=5: n=31 base trap(b)=0.387 mean b -0.374 mean c -0.347
+    F1_dev_hold    nF= 10 nR= 21 trapF 0.40 trapR 0.38 meanF_b -0.450 meanR_b -0.338 meanF_c -0.238 meanR_c -0.399
+    F2_top1        nF= 15 nR= 16 trapF 0.27 trapR 0.50 meanF_b -0.434 meanR_b -0.318 meanF_c -0.314 meanR_c -0.378
+    F3_top10       nF= 23 nR=  8 trapF 0.48 trapR 0.12 meanF_b -0.404 meanR_b -0.289 meanF_c -0.345 meanR_c -0.352
+    F4_insiders    nF=  7 nR= 24 trapF 0.29 trapR 0.42 meanF_b -0.468 meanR_b -0.347 meanF_c -0.459 meanR_c -0.315
+    F5_thin        nF=0 nR=31
+    F6_net_sell    nF= 13 nR= 18 trapF 0.62 trapR 0.22 meanF_b -0.501 meanR_b -0.282 meanF_c -0.348 meanR_c -0.346
+    F7_crew        nF=0 nR=31
+    F8_wash        nF= 15 nR= 16 trapF 0.53 trapR 0.25 meanF_b -0.510 meanR_b -0.246 meanF_c -0.568 meanR_c -0.140
+    F9_dev_sold    nF= 18 nR= 13 trapF 0.39 trapR 0.38 meanF_b -0.298 meanR_b -0.479 meanF_c -0.344 meanR_c -0.352
+    F10_low        nF=0 nR=31
+    F11_stalled    nF= 13 nR= 18 trapF 0.62 trapR 0.22 meanF_b -0.501 meanR_b -0.282 meanF_c -0.348 meanR_c -0.346
+    F12_spike      nF=  1 nR= 30 trapF 1.00 trapR 0.37 meanF_b -0.863 meanR_b -0.358 meanF_c -0.903 meanR_c -0.329
+    F13_flippers   nF= 10 nR= 21 trapF 0.40 trapR 0.38 meanF_b -0.523 meanR_b -0.303 meanF_c -0.609 meanR_c -0.222
+    F14_rt_slot    nF=  5 nR= 26 trapF 0.40 trapR 0.38 meanF_b -0.548 meanR_b -0.341 meanF_c -0.579 meanR_c -0.303

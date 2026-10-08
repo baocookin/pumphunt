@@ -1,0 +1,398 @@
+{
+ "status": {
+  "last_chain_ts": 0.0,
+  "chain_feed": {
+   "connected": true,
+   "connects": 1,
+   "stale_reconnects": 0,
+   "subscribed": 1,
+   "notifications": 3,
+   "events": 0,
+   "last_msg_ts": 1791442038.5307207,
+   "last_error": null,
+   "mentions": [
+    "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
+   ]
+  },
+  "chain_scope": "migrations",
+  "portal_feed": {
+   "connected": true,
+   "connects": 1,
+   "stale_reconnects": 0,
+   "messages": 231,
+   "last_msg_ts": 1791442210.8022387,
+   "last_error": null
+  },
+  "now": 1791442211.543919,
+  "sniper": {
+   "polls": 11,
+   "creates_seen": 270,
+   "sampled": 14,
+   "census_gaps": 0,
+   "harvested": 11,
+   "not_sol": 2,
+   "errors": 0,
+   "credits_today": 19532,
+   "paused": false,
+   "gtfa": true,
+   "gtfa_error": null,
+   "short_then_empty": 0,
+   "short_then_more": 0,
+   "queued": 188,
+   "last_poll_ts": 1791442183.2891963,
+   "last_harvest_ts": 1791442183.3730867,
+   "last_error": null
+  },
+  "harvest": {
+   "runs": 0,
+   "last_run_ts": 0.0,
+   "last_error": null,
+   "rows_last_run": 0,
+   "with_data": 28,
+   "no_pool": 0,
+   "no_candles": 2,
+   "due": 248,
+   "pending": 1626,
+   "fills_rows": 28,
+   "swaps_fetched": 30579,
+   "credits_today": 209808,
+   "fills_paused": false,
+   "gtfa": true,
+   "gtfa_error": null,
+   "replay_windows": 28,
+   "window_incomplete": 1,
+   "windows_with_breaks": 0,
+   "flow_rows": 27,
+   "states_unresolved": 0,
+   "token_filter": true,
+   "token_filter_note": "verified: keeps every swap, drops the rest",
+   "token_filter_checks": {
+    "same": 0,
+    "reduced": 2,
+    "unreduced": 0,
+    "violations": 0,
+    "audits": 0,
+    "repaired": 0
+   },
+   "features_rows": 28,
+   "funding_rows": 6,
+   "funding_lookups": 20,
+   "features_error": null
+  },
+  "gecko": {
+   "calls": 46,
+   "rate_limited": 5,
+   "not_found": 0,
+   "errors": 0,
+   "rpm_now": 3.7
+  },
+  "last_portal_ts": 1791442210.8022387,
+  "loops": {
+   "status": 0.0,
+   "poller": 0.3,
+   "harvester": 35.3,
+   "snapshots": 4.1,
+   "sniper": 28.2
+  },
+  "started": 1791441574.7157416,
+  "counts": {
+   "create": 0,
+   "trade": 0,
+   "complete": 0,
+   "migrate": 0,
+   "portal_create": 226,
+   "portal_migrate": 3,
+   "portal_migrate_other": 0,
+   "harvested": 30
+  },
+  "portal_pools": {
+   "pump-amm": 3
+  },
+  "mentions": [
+   "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
+  ],
+  "rpc": {
+   "confirmed": 3,
+   "failed": 0,
+   "no_event": 29,
+   "last_rpc_ts": 1791442038.6427352,
+   "via": {
+    "log": 0,
+    "cpi": 3,
+    "accounts": 0
+   },
+   "triggered": {
+    "portal": 1,
+    "chain": 2,
+    "poller": 79
+   },
+   "poller": {
+    "polls": 22,
+    "listed": 464,
+    "skipped_failed": 96,
+    "cursor": "3Wo9oj2Hkj6mxJ4mcXfMJbBcgdZbVuBMhXdH9VdCmRYZFGa4CRkniGsetfH3UCTRHdc4sqoQWu6i8J6u6mZej9Lt",
+    "last_poll_ts": 1791442211.1942718,
+    "last_error": null,
+    "backfill_from": 1791419975.0283294,
+    "initial_backfill": false
+   },
+   "portal_mislabeled": 0,
+   "noop": 50,
+   "retry_pending": 0,
+   "failed_final": 0,
+   "last_failed": null,
+   "last_no_event": {
+    "signature": "2V3ufQx54fYQSgV336J5y3x6BtwVV6p1ApxMScn2VjpB8VwyPmMQPYZLZ5f3FN6hMxM3LeVt84f5GFBJA7kxc5tX",
+    "found": true,
+    "version": 1,
+    "slot": 454466057,
+    "err": null,
+    "n_keys": 50,
+    "n_static": 50,
+    "n_logs": 28,
+    "log_truncated": false,
+    "already_migrated_log": false,
+    "creates_pool": false,
+    "log_event_discs": [],
+    "programs": [
+     "11111111111111111111111111111111",
+     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+     "QECRnxRggfBRxE65mtJ7q7gCLQTMwQ1ZdUWUNEg2yZi",
+     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+    ],
+    "pump_ixs": [],
+    "events": []
+   },
+   "withdraw_authority": "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg",
+   "authority_static": true,
+   "migrate_ix": "migrate_v2",
+   "migrate_users": {
+    "A4emsn3r9pEypNJBniEgxotx4mU6cEXZx74DvkXSx24e": 1,
+    "3WsFQa2HNEGPjRYw8J7id6e5W1eTkCxTTY9A2dyCcpTt": 1,
+    "9F9hLL823Ktc59Jdk7oubZN3aDaD9KWKyHHbX8kXD7db": 1
+   },
+   "migrate_user_static": true,
+   "transport": {
+    "calls": 489,
+    "rate_limited": 0,
+    "unavailable": 0,
+    "errors": 0,
+    "credits_est": 5230
+   }
+  },
+  "task_errors": {},
+  "snapshots": {
+   "taken": 8,
+   "late": 0,
+   "errors": 0,
+   "queued": 45,
+   "last_ts": 1791442091.8098214,
+   "last_error": null
+  }
+ },
+ "build_sha": "71c15b36f8f26a702d489e73b1732b795c904294",
+ "chain_scope": "migrations",
+ "creates_24h": 48205,
+ "creates_24h_chain": 0,
+ "creates_24h_portal": 48205,
+ "creates_24h_census": 55827,
+ "portal_coverage": null,
+ "migrations_24h": 1321,
+ "migrations_24h_portal": 1195,
+ "migrations_total": 4925,
+ "hourly": [
+  {
+   "hour": "2026-10-07T07",
+   "creates_chain": 0,
+   "creates_portal": 1315,
+   "creates_census": 1489,
+   "migrations": 45,
+   "migrations_portal": 42
+  },
+  {
+   "hour": "2026-10-07T08",
+   "creates_chain": 0,
+   "creates_portal": 1548,
+   "creates_census": 1699,
+   "migrations": 44,
+   "migrations_portal": 41
+  },
+  {
+   "hour": "2026-10-07T09",
+   "creates_chain": 0,
+   "creates_portal": 1615,
+   "creates_census": 1784,
+   "migrations": 38,
+   "migrations_portal": 37
+  },
+  {
+   "hour": "2026-10-07T10",
+   "creates_chain": 0,
+   "creates_portal": 1747,
+   "creates_census": 1934,
+   "migrations": 34,
+   "migrations_portal": 29
+  },
+  {
+   "hour": "2026-10-07T11",
+   "creates_chain": 0,
+   "creates_portal": 2181,
+   "creates_census": 2391,
+   "migrations": 36,
+   "migrations_portal": 34
+  },
+  {
+   "hour": "2026-10-07T12",
+   "creates_chain": 0,
+   "creates_portal": 2715,
+   "creates_census": 2883,
+   "migrations": 63,
+   "migrations_portal": 59
+  },
+  {
+   "hour": "2026-10-07T13",
+   "creates_chain": 0,
+   "creates_portal": 2190,
+   "creates_census": 2421,
+   "migrations": 75,
+   "migrations_portal": 73
+  },
+  {
+   "hour": "2026-10-07T14",
+   "creates_chain": 0,
+   "creates_portal": 2098,
+   "creates_census": 2521,
+   "migrations": 58,
+   "migrations_portal": 49
+  },
+  {
+   "hour": "2026-10-07T15",
+   "creates_chain": 0,
+   "creates_portal": 2746,
+   "creates_census": 3157,
+   "migrations": 64,
+   "migrations_portal": 61
+  },
+  {
+   "hour": "2026-10-07T16",
+   "creates_chain": 0,
+   "creates_portal": 2567,
+   "creates_census": 2982,
+   "migrations": 60,
+   "migrations_portal": 59
+  },
+  {
+   "hour": "2026-10-07T17",
+   "creates_chain": 0,
+   "creates_portal": 2173,
+   "creates_census": 2704,
+   "migrations": 69,
+   "migrations_portal": 64
+  },
+  {
+   "hour": "2026-10-07T18",
+   "creates_chain": 0,
+   "creates_portal": 2213,
+   "creates_census": 2696,
+   "migrations": 58,
+   "migrations_portal": 55
+  },
+  {
+   "hour": "2026-10-07T19",
+   "creates_chain": 0,
+   "creates_portal": 2247,
+   "creates_census": 2665,
+   "migrations": 57,
+   "migrations_portal": 53
+  },
+  {
+   "hour": "2026-10-07T20",
+   "creates_chain": 0,
+   "creates_portal": 2338,
+   "creates_census": 2795,
+   "migrations": 67,
+   "migrations_portal": 61
+  },
+  {
+   "hour": "2026-10-07T21",
+   "creates_chain": 0,
+   "creates_portal": 2506,
+   "creates_census": 3247,
+   "migrations": 80,
+   "migrations_portal": 58
+  },
+  {
+   "hour": "2026-10-07T22",
+   "creates_chain": 0,
+   "creates_portal": 2170,
+   "creates_census": 2513,
+   "migrations": 75,
+   "migrations_portal": 64
+  },
+  {
+   "hour": "2026-10-07T23",
+   "creates_chain": 0,
+   "creates_portal": 2041,
+   "creates_census": 2409,
+   "migrations": 55,
+   "migrations_portal": 52
+  },
+  {
+   "hour": "2026-10-08T00",
+   "creates_chain": 0,
+   "creates_portal": 2027,
+   "creates_census": 2474,
+   "migrations": 71,
+   "migrations_portal": 63
+  },
+  {
+   "hour": "2026-10-08T01",
+   "creates_chain": 0,
+   "creates_portal": 1948,
+   "creates_census": 2168,
+   "migrations": 56,
+   "migrations_portal": 50
+  },
+  {
+   "hour": "2026-10-08T02",
+   "creates_chain": 0,
+   "creates_portal": 1394,
+   "creates_census": 1577,
+   "migrations": 45,
+   "migrations_portal": 41
+  },
+  {
+   "hour": "2026-10-08T03",
+   "creates_chain": 0,
+   "creates_portal": 2154,
+   "creates_census": 2432,
+   "migrations": 55,
+   "migrations_portal": 48
+  },
+  {
+   "hour": "2026-10-08T04",
+   "creates_chain": 0,
+   "creates_portal": 1366,
+   "creates_census": 1670,
+   "migrations": 41,
+   "migrations_portal": 34
+  },
+  {
+   "hour": "2026-10-08T05",
+   "creates_chain": 0,
+   "creates_portal": 1685,
+   "creates_census": 1870,
+   "migrations": 44,
+   "migrations_portal": 39
+  },
+  {
+   "hour": "2026-10-08T06",
+   "creates_chain": 0,
+   "creates_portal": 1221,
+   "creates_census": 1346,
+   "migrations": 31,
+   "migrations_portal": 29
+  }
+ ]
+}
