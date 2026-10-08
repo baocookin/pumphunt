@@ -1,0 +1,45 @@
+funding rows with d30_h60 fill: 373  C2-like: 307
+
+## ALL funding rows  cell d30_h60
+  base n= 373 mean=-0.283 [-0.344,-0.218] med=-0.232 win=0.25 trap=0.36
+  M1_fresh     nF= 38 trapF 0.32 trapR 0.37 meanF -0.236 meanR -0.288
+  M2_cluster   nF= 48 trapF 0.35 trapR 0.36 meanF -0.208 meanR -0.294
+  M3_devlink   nF= 60 trapF 0.40 trapR 0.35 meanF -0.321 meanR -0.276
+  M4_selfgrad  nF=124 trapF 0.48 trapR 0.31 meanF -0.446 meanR -0.202
+  M5_bundle    nF=160 trapF 0.33 trapR 0.39 meanF -0.252 meanR -0.306
+  M6_clshare   nF=0
+  remainder MA_funding n= 285 mean=-0.292 [-0.361,-0.212] med=-0.216 win=0.26 trap=0.36 H1 -0.263 H2 -0.320
+  remainder MB_all     n=  67 mean=-0.121 [-0.266,+0.039] med=-0.212 win=0.27 trap=0.28 H1 -0.112 H2 -0.129
+
+## ALL funding rows  cell d30_h1440
+  base n= 373 mean=-0.608 [-0.666,-0.545] med=-0.859 win=0.10 trap=0.70
+  M1_fresh     nF= 38 trapF 0.87 trapR 0.68 meanF -0.810 meanR -0.585
+  M2_cluster   nF= 48 trapF 0.75 trapR 0.69 meanF -0.698 meanR -0.595
+  M3_devlink   nF= 60 trapF 0.70 trapR 0.70 meanF -0.641 meanR -0.602
+  M4_selfgrad  nF=124 trapF 0.78 trapR 0.66 meanF -0.685 meanR -0.570
+  M5_bundle    nF=160 trapF 0.67 trapR 0.72 meanF -0.622 meanR -0.598
+  M6_clshare   nF=0
+  remainder MA_funding n= 285 mean=-0.593 [-0.664,-0.516] med=-0.863 win=0.12 trap=0.69 H1 -0.581 H2 -0.604
+  remainder MB_all     n=  67 mean=-0.484 [-0.653,-0.264] med=-0.722 win=0.04 trap=0.67 H1 -0.513 H2 -0.456
+
+## C2-like  cell d30_h60
+  base n= 307 mean=-0.324 [-0.395,-0.245] med=-0.417 win=0.29 trap=0.44
+  M1_fresh     nF= 32 trapF 0.38 trapR 0.44 meanF -0.254 meanR -0.332
+  M2_cluster   nF= 41 trapF 0.41 trapR 0.44 meanF -0.231 meanR -0.338
+  M3_devlink   nF= 47 trapF 0.51 trapR 0.42 meanF -0.384 meanR -0.313
+  M4_selfgrad  nF=123 trapF 0.48 trapR 0.41 meanF -0.450 meanR -0.239
+  M5_bundle    nF=115 trapF 0.45 trapR 0.43 meanF -0.298 meanR -0.339
+  M6_clshare   nF=0
+  remainder MA_funding n= 238 mean=-0.332 [-0.413,-0.239] med=-0.404 win=0.29 trap=0.43 H1 -0.296 H2 -0.368
+  remainder MB_all     n=  53 mean=-0.158 [-0.321,+0.005] med=-0.404 win=0.30 trap=0.34 H1 -0.186 H2 -0.131
+
+## C2-like  cell d30_h1440
+  base n= 307 mean=-0.678 [-0.743,-0.606] med=-0.921 win=0.11 trap=0.82
+  M1_fresh     nF= 32 trapF 1.00 trapR 0.80 meanF -0.897 meanR -0.653
+  M2_cluster   nF= 41 trapF 0.88 trapR 0.81 meanF -0.793 meanR -0.660
+  M3_devlink   nF= 47 trapF 0.89 trapR 0.81 meanF -0.768 meanR -0.662
+  M4_selfgrad  nF=123 trapF 0.78 trapR 0.85 meanF -0.686 meanR -0.673
+  M5_bundle    nF=115 trapF 0.89 trapR 0.78 meanF -0.754 meanR -0.633
+  M6_clshare   nF=0
+  remainder MA_funding n= 238 mean=-0.650 [-0.729,-0.560] med=-0.925 win=0.13 trap=0.80 H1 -0.626 H2 -0.673
+  remainder MB_all     n=  53 mean=-0.526 [-0.731,-0.250] med=-0.758 win=0.06 trap=0.79 H1 -0.563 H2 -0.491

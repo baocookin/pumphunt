@@ -1,0 +1,108 @@
+
+################ D = 120s   population n=503  (graduated later: 10)
+  ALL exit a10m    n= 503 mean=-0.063 [-0.097,-0.028] med=-0.037 win=0.05 trap=0.062 | H1 -0.096 H2 -0.031
+  ALL exit b30m    n= 503 mean=-0.099 [-0.128,-0.068] med=-0.049 win=0.03 trap=0.076 | H1 -0.132 H2 -0.066
+  ALL exit c_hold  n= 503 mean=-0.105 [-0.138,-0.068] med=-0.054 win=0.03 trap=0.089 | H1 -0.140 H2 -0.069
+  flag             nF  trapF  trapR  lift  meanF_b  meanR_b  meanF_c  meanR_c  traps caught / all traps
+  F1_dev_hold      59  0.186  0.061  3.07   -0.238   -0.080   -0.245   -0.086  11/38
+  F2_top1         102  0.118  0.065  1.81   -0.139   -0.088   -0.165   -0.089  12/38
+  F3_top10         77  0.442  0.009 47.03   -0.206   -0.079   -0.235   -0.081  34/38
+  F4_insiders      66  0.227  0.053  4.32   -0.119   -0.096   -0.162   -0.096  15/38
+  F5_thin         261  0.000  0.157  0.00   -0.046   -0.156   -0.047   -0.167  0/38
+  F6_net_sell     345  0.038  0.158  0.24   -0.095   -0.107   -0.102   -0.111  13/38
+  F7_crew          16  0.062  0.076  0.82   -0.186   -0.096   -0.190   -0.102  1/38
+  F8_wash          14  0.286  0.070  4.11   -0.249   -0.094   -0.250   -0.100  4/38
+  F9_dev_sold     327  0.061  0.102  0.60   -0.098   -0.100   -0.103   -0.108  20/38
+  F10_low         406  0.000  0.392  0.00   -0.072   -0.208   -0.073   -0.237  0/38
+  F11_stalled     345  0.038  0.158  0.24   -0.095   -0.107   -0.102   -0.111  13/38
+  F12_spike        10  0.700  0.063 11.13   -0.325   -0.094   -0.332   -0.100  7/38
+  F13_flippers     74  0.216  0.051  4.22   -0.161   -0.088   -0.190   -0.090  16/38
+  F14_rt_slot      30  0.267  0.063  4.20   -0.150   -0.095   -0.162   -0.101  8/38
+  --- remainders after registered combos
+  A_law3_core    a10m    n=  89 mean=-0.044 [-0.051,-0.038] med=-0.032 win=0.00 trap=0.000 H1 -0.046 H2 -0.042 grads=0
+  A_law3_core    b30m    n=  89 mean=-0.047 [-0.054,-0.041] med=-0.035 win=0.00 trap=0.000 H1 -0.050 H2 -0.045 grads=0
+  A_law3_core    c_hold  n=  89 mean=-0.049 [-0.057,-0.042] med=-0.036 win=0.01 trap=0.000 H1 -0.053 H2 -0.045 grads=0
+  B_law3_flow    a10m    n=   2 mean=-0.205 [-0.223,-0.187] med=-0.205 win=0.00 trap=0.000 H1 -0.187 H2 -0.223 grads=0
+  B_law3_flow    b30m    n=   2 mean=-0.205 [-0.223,-0.187] med=-0.205 win=0.00 trap=0.000 H1 -0.187 H2 -0.223 grads=0
+  B_law3_flow    c_hold  n=   2 mean=-0.205 [-0.223,-0.187] med=-0.205 win=0.00 trap=0.000 H1 -0.187 H2 -0.223 grads=0
+  C_everything   a10m    n=0
+  C_everything   b30m    n=0
+  C_everything   c_hold  n=0
+  D_momentum     a10m    n=  57 mean=+0.017 [-0.214,+0.286] med=-0.376 win=0.26 trap=0.333 H1 +0.067 H2 -0.031 grads=8
+  D_momentum     b30m    n=  57 mean=-0.133 [-0.352,+0.120] med=-0.454 win=0.19 trap=0.439 H1 -0.224 H2 -0.045 grads=8
+  D_momentum     c_hold  n=  57 mean=-0.141 [-0.404,+0.169] med=-0.522 win=0.16 trap=0.526 H1 -0.232 H2 -0.054 grads=8
+  E_momentum_A   a10m    n=0
+  E_momentum_A   b30m    n=0
+  E_momentum_A   c_hold  n=0
+
+################ D = 300s   population n=207  (graduated later: 6)
+  ALL exit a10m    n= 207 mean=-0.050 [-0.102,+0.011] med=-0.033 win=0.10 trap=0.097 | H1 -0.119 H2 +0.018
+  ALL exit b30m    n= 207 mean=-0.103 [-0.150,-0.050] med=-0.049 win=0.05 trap=0.121 | H1 -0.148 H2 -0.059
+  ALL exit c_hold  n= 207 mean=-0.090 [-0.165,+0.018] med=-0.053 win=0.05 trap=0.126 | H1 -0.161 H2 -0.019
+  flag             nF  trapF  trapR  lift  meanF_b  meanR_b  meanF_c  meanR_c  traps caught / all traps
+  F1_dev_hold      27  0.333  0.089  3.75   -0.248   -0.081   -0.250   -0.066  9/25
+  F2_top1          43  0.326  0.067  4.85   -0.265   -0.061   -0.286   -0.038  14/25
+  F3_top10         42  0.524  0.018 28.81   -0.355   -0.039   -0.389   -0.014  22/25
+  F4_insiders      24  0.292  0.098  2.97   -0.172   -0.094   -0.173   -0.079  7/25
+  F5_thin          73  0.000  0.187  0.00   -0.023   -0.147   -0.029   -0.123  0/25
+  F6_net_sell     149  0.054  0.293  0.18   -0.078   -0.168   -0.056   -0.177  8/25
+  F7_crew          10  0.300  0.112  2.69   -0.275   -0.094   -0.320   -0.078  3/25
+  F8_wash          20  0.350  0.096  3.64   -0.260   -0.086   -0.290   -0.069  7/25
+  F9_dev_sold     141  0.106  0.152  0.70   -0.119   -0.070   -0.134   +0.004  15/25
+  F10_low         152  0.000  0.455  0.00   -0.054   -0.240   -0.059   -0.175  0/25
+  F11_stalled     149  0.054  0.293  0.18   -0.078   -0.168   -0.056   -0.177  8/25
+  F12_spike         4  0.750  0.108  6.92   -0.321   -0.099   -0.342   -0.085  3/25
+  F13_flippers     54  0.241  0.078  3.07   -0.175   -0.078   -0.205   -0.049  13/25
+  F14_rt_slot      24  0.250  0.104  2.41   -0.181   -0.093   -0.195   -0.076  6/25
+  --- remainders after registered combos
+  A_law3_core    a10m    n=  25 mean=+0.013 [-0.033,+0.093] med=-0.029 win=0.12 trap=0.000 H1 -0.018 H2 +0.041 grads=1
+  A_law3_core    b30m    n=  25 mean=+0.039 [-0.061,+0.220] med=-0.033 win=0.08 trap=0.000 H1 -0.036 H2 +0.109 grads=1
+  A_law3_core    c_hold  n=  25 mean=+0.250 [-0.129,+0.940] med=-0.034 win=0.08 trap=0.040 H1 -0.052 H2 +0.528 grads=1
+  B_law3_flow    a10m    n=   1 mean=-0.034 [-0.034,-0.034] med=-0.034 win=0.00 trap=0.000 H1 +nan H2 -0.034 grads=0
+  B_law3_flow    b30m    n=   1 mean=-0.034 [-0.034,-0.034] med=-0.034 win=0.00 trap=0.000 H1 +nan H2 -0.034 grads=0
+  B_law3_flow    c_hold  n=   1 mean=-0.034 [-0.034,-0.034] med=-0.034 win=0.00 trap=0.000 H1 +nan H2 -0.034 grads=0
+  C_everything   a10m    n=0
+  C_everything   b30m    n=0
+  C_everything   c_hold  n=0
+  D_momentum     a10m    n=  29 mean=+0.025 [-0.288,+0.397] med=-0.352 win=0.34 trap=0.448 H1 -0.032 H2 +0.078 grads=3
+  D_momentum     b30m    n=  29 mean=-0.279 [-0.510,-0.009] med=-0.581 win=0.17 trap=0.586 H1 -0.226 H2 -0.329 grads=3
+  D_momentum     c_hold  n=  29 mean=-0.302 [-0.543,-0.016] med=-0.603 win=0.17 trap=0.586 H1 -0.260 H2 -0.342 grads=3
+  E_momentum_A   a10m    n=0
+  E_momentum_A   b30m    n=0
+  E_momentum_A   c_hold  n=0
+
+################ D = 600s   population n=91  (graduated later: 2)
+  ALL exit a10m    n=  91 mean=-0.100 [-0.149,-0.051] med=-0.030 win=0.14 trap=0.066 | H1 -0.099 H2 -0.101
+  ALL exit b30m    n=  91 mean=-0.167 [-0.228,-0.102] med=-0.068 win=0.07 trap=0.132 | H1 -0.113 H2 -0.220
+  ALL exit c_hold  n=  91 mean=-0.163 [-0.240,-0.068] med=-0.083 win=0.07 trap=0.176 | H1 -0.125 H2 -0.200
+  flag             nF  trapF  trapR  lift  meanF_b  meanR_b  meanF_c  meanR_c  traps caught / all traps
+  F1_dev_hold      15  0.267  0.105  2.53   -0.322   -0.137   -0.178   -0.160  4/12
+  F2_top1          23  0.174  0.118  1.48   -0.315   -0.117   -0.246   -0.135  4/12
+  F3_top10         24  0.458  0.015 30.71   -0.396   -0.085   -0.340   -0.100  11/12
+  F4_insiders      10  0.200  0.123  1.62   -0.342   -0.146   -0.337   -0.142  2/12
+  F5_thin          23  0.000  0.176  0.00   -0.034   -0.212   -0.030   -0.208  0/12
+  F6_net_sell      59  0.136  0.125  1.08   -0.155   -0.189   -0.130   -0.224  8/12
+  F7_crew           0    nan  0.132   nan     +nan   -0.167     +nan   -0.163  0/12
+  F8_wash          27  0.296  0.062  4.74   -0.330   -0.099   -0.367   -0.077  8/12
+  F9_dev_sold      66  0.106  0.200  0.53   -0.129   -0.267   -0.149   -0.201  7/12
+  F10_low          60  0.000  0.387  0.00   -0.060   -0.374   -0.068   -0.347  0/12
+  F11_stalled      59  0.136  0.125  1.08   -0.155   -0.189   -0.130   -0.224  8/12
+  F12_spike         1  1.000  0.122  8.18   -0.863   -0.159   -0.903   -0.155  1/12
+  F13_flippers     26  0.154  0.123  1.25   -0.266   -0.128   -0.312   -0.104  4/12
+  F14_rt_slot      16  0.125  0.133  0.94   -0.249   -0.150   -0.260   -0.142  2/12
+  --- remainders after registered combos
+  A_law3_core    a10m    n=   8 mean=-0.092 [-0.194,-0.028] med=-0.029 win=0.00 trap=0.000 H1 -0.067 H2 -0.117 grads=0
+  A_law3_core    b30m    n=   8 mean=-0.097 [-0.197,-0.032] med=-0.034 win=0.00 trap=0.000 H1 -0.073 H2 -0.121 grads=0
+  A_law3_core    c_hold  n=   8 mean=-0.140 [-0.349,-0.014] med=-0.029 win=0.12 trap=0.125 H1 -0.064 H2 -0.217 grads=0
+  B_law3_flow    a10m    n=   2 mean=-0.283 [-0.383,-0.183] med=-0.283 win=0.00 trap=0.000 H1 -0.183 H2 -0.383 grads=0
+  B_law3_flow    b30m    n=   2 mean=-0.285 [-0.386,-0.183] med=-0.285 win=0.00 trap=0.000 H1 -0.183 H2 -0.386 grads=0
+  B_law3_flow    c_hold  n=   2 mean=-0.505 [-0.827,-0.184] med=-0.505 win=0.00 trap=0.500 H1 -0.184 H2 -0.827 grads=0
+  C_everything   a10m    n=0
+  C_everything   b30m    n=0
+  C_everything   c_hold  n=0
+  D_momentum     a10m    n=  18 mean=-0.161 [-0.313,-0.007] med=-0.176 win=0.39 trap=0.167 H1 -0.210 H2 -0.111 grads=1
+  D_momentum     b30m    n=  18 mean=-0.282 [-0.499,-0.016] med=-0.388 win=0.17 trap=0.222 H1 -0.204 H2 -0.361 grads=1
+  D_momentum     c_hold  n=  18 mean=-0.346 [-0.582,-0.038] med=-0.412 win=0.11 trap=0.444 H1 -0.251 H2 -0.442 grads=1
+  E_momentum_A   a10m    n=   1 mean=-0.383 [-0.383,-0.383] med=-0.383 win=0.00 trap=0.000 H1 +nan H2 -0.383 grads=0
+  E_momentum_A   b30m    n=   1 mean=-0.386 [-0.386,-0.386] med=-0.386 win=0.00 trap=0.000 H1 +nan H2 -0.386 grads=0
+  E_momentum_A   c_hold  n=   1 mean=-0.827 [-0.827,-0.827] med=-0.827 win=0.00 trap=1.000 H1 +nan H2 -0.827 grads=0

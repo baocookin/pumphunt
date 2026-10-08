@@ -1,0 +1,90 @@
+{
+ "dir": "/data",
+ "files": [
+  {
+   "name": "chain-2026-10-06.jsonl",
+   "bytes": 28233,
+   "mtime": 1791322406.6482306
+  },
+  {
+   "name": "chain-2026-10-07.jsonl",
+   "bytes": 36327,
+   "mtime": 1791417539.3817637
+  },
+  {
+   "name": "chain-2026-10-08.jsonl",
+   "bytes": 11871,
+   "mtime": 1791440060.7484362
+  },
+  {
+   "name": "holders-2026-10-06.jsonl.gz",
+   "bytes": 706952,
+   "mtime": 1791331255.34563
+  },
+  {
+   "name": "holders-2026-10-07.jsonl.gz",
+   "bytes": 1552741,
+   "mtime": 1791417693.5895402
+  },
+  {
+   "name": "holders-2026-10-08.jsonl",
+   "bytes": 725315,
+   "mtime": 1791442092.1615918
+  },
+  {
+   "name": "migrations.jsonl",
+   "bytes": 3058095,
+   "mtime": 1791442038.6406658
+  },
+  {
+   "name": "portal-2026-10-06.jsonl",
+   "bytes": 24239611,
+   "mtime": 1791331198.86071
+  },
+  {
+   "name": "portal-2026-10-07.jsonl",
+   "bytes": 31869644,
+   "mtime": 1791417597.766679
+  },
+  {
+   "name": "portal-2026-10-08.jsonl",
+   "bytes": 7705695,
+   "mtime": 1791442198.4834442
+  },
+  {
+   "name": "sniper-2026-10-06.jsonl.gz",
+   "bytes": 144473,
+   "mtime": 1791331214.6496875
+  },
+  {
+   "name": "sniper-2026-10-07.jsonl",
+   "bytes": 28619767,
+   "mtime": 1791412390.8551698
+  },
+  {
+   "name": "sniper-2026-10-08.jsonl",
+   "bytes": 10905445,
+   "mtime": 1791442183.4574652
+  },
+  {
+   "name": "survivor.jsonl",
+   "bytes": 117850142,
+   "mtime": 1791442176.2664752
+  },
+  {
+   "name": "swaps-2026-10-06.jsonl",
+   "bytes": 195230093,
+   "mtime": 1791321132.281028
+  },
+  {
+   "name": "swaps-2026-10-07.jsonl.gz",
+   "bytes": 77918911,
+   "mtime": 1791417734.377481
+  },
+  {
+   "name": "swaps-2026-10-08.jsonl",
+   "bytes": 177328902,
+   "mtime": 1791442175.5034761
+  }
+ ]
+}

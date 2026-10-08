@@ -1,0 +1,94 @@
+census span 0.98 days, classic launches 1498, scale to full stream x20 (5% sample)
+
+######## D=120s  all=503 traction(real>=5)=97 momentum(real>=5 & rising)=57
+  Law 1: big win = net(b) >= +100%; in traction stratum
+    base: traps 38  big wins 7  win>0 15  of 97
+    F1_dev_hold   removes  23: traps  11, big wins  1/7, winners(>0)  1
+    F2_top1       removes  34: traps  12, big wins  4/7, winners(>0)  4
+    F3_top10      removes  72: traps  34, big wins  6/7, winners(>0) 12
+    F4_insiders   removes  39: traps  15, big wins  5/7, winners(>0)  8
+    F8_wash       removes   4: traps   4, big wins  0/7, winners(>0)  0
+    F9_dev_sold   removes  50: traps  20, big wins  3/7, winners(>0)  6
+    F13_flippers  removes  31: traps  16, big wins  2/7, winners(>0)  5
+    F6_net_sell   removes  40: traps  13, big wins  1/7, winners(>0)  4
+  Law 4: momentum set, entry at D+L, exit at the same absolute time D+30min
+    L= -60s  n=  57 mean=+0.084 [-0.189,+0.372] med=-0.315 win=0.19  (curve completed before entry: 0)
+    L= -30s  n=  57 mean=-0.055 [-0.306,+0.211] med=-0.430 win=0.19  (curve completed before entry: 0)
+    L=  +0s  n=  57 mean=-0.133 [-0.365,+0.113] med=-0.454 win=0.19  (curve completed before entry: 0)
+    L= +30s  n=  57 mean=-0.115 [-0.335,+0.117] med=-0.441 win=0.19  (curve completed before entry: 0)
+    L= +60s  n=  55 mean=-0.144 [-0.359,+0.100] med=-0.448 win=0.15  (curve completed before entry: 2)
+    L=+120s  n=  55 mean=-0.086 [-0.260,+0.096] med=-0.217 win=0.16  (curve completed before entry: 2)
+    buy SOL in the 120 s before D: 3467.6, in the 120 s after: 1645.0 (momentum set, summed)
+  Law 2: sell SOL in the 30 min after entry, by who the seller was at the decision (traction set)
+    traps     n= 38 sell SOL   4131.9: insider 4%  top10 14%  other_pre_holder 24%  bought_after_D 58%
+    non-traps n= 59 sell SOL   4078.4: insider 3%  top10 14%  other_pre_holder 19%  bought_after_D 65%
+  Law 5: traps caught per day (full stream estimate = census count / span / 0.05), and lift
+    F1_dev_hold        224/day    F2_top1            245/day    F3_top10           693/day    F4_insiders        306/day    F5_thin              0/day    F6_net_sell        265/day    F7_crew             20/day    F8_wash             82/day    F9_dev_sold        408/day    F10_low              0/day    F11_stalled        265/day    F12_spike          143/day    F13_flippers       326/day    F14_rt_slot        163/day
+    signals/day if A_law3_core:    1814  (census n=89)
+    signals/day if B_law3_flow:      41  (census n=2)
+    signals/day if C_everything:       0  (census n=0)
+    signals/day if D_momentum:    1162  (census n=57)
+    signals/day if E_momentum_A:       0  (census n=0)
+    signals/day if momentum only:    1162
+
+######## D=300s  all=207 traction(real>=5)=55 momentum(real>=5 & rising)=29
+  Law 1: big win = net(b) >= +100%; in traction stratum
+    base: traps 25  big wins 6  win>0 8  of 55
+    F1_dev_hold   removes  14: traps   9, big wins  1/6, winners(>0)  1
+    F2_top1       removes  28: traps  14, big wins  1/6, winners(>0)  1
+    F3_top10      removes  37: traps  22, big wins  3/6, winners(>0)  4
+    F4_insiders   removes  15: traps   7, big wins  2/6, winners(>0)  2
+    F8_wash       removes  11: traps   7, big wins  0/6, winners(>0)  2
+    F9_dev_sold   removes  31: traps  15, big wins  2/6, winners(>0)  3
+    F13_flippers  removes  24: traps  13, big wins  3/6, winners(>0)  3
+    F6_net_sell   removes  26: traps   8, big wins  2/6, winners(>0)  3
+  Law 4: momentum set, entry at D+L, exit at the same absolute time D+30min
+    L= -60s  n=  29 mean=-0.134 [-0.409,+0.242] med=-0.467 win=0.21  (curve completed before entry: 0)
+    L= -30s  n=  29 mean=-0.197 [-0.468,+0.146] med=-0.544 win=0.17  (curve completed before entry: 0)
+    L=  +0s  n=  29 mean=-0.279 [-0.520,+0.004] med=-0.581 win=0.17  (curve completed before entry: 0)
+    L= +30s  n=  29 mean=-0.279 [-0.520,-0.005] med=-0.583 win=0.17  (curve completed before entry: 0)
+    L= +60s  n=  29 mean=-0.308 [-0.507,-0.062] med=-0.498 win=0.17  (curve completed before entry: 0)
+    L=+120s  n=  28 mean=-0.377 [-0.537,-0.207] med=-0.564 win=0.14  (curve completed before entry: 1)
+    buy SOL in the 120 s before D: 916.8, in the 120 s after: 828.5 (momentum set, summed)
+  Law 2: sell SOL in the 30 min after entry, by who the seller was at the decision (traction set)
+    traps     n= 25 sell SOL   3298.8: insider 1%  top10 13%  other_pre_holder 28%  bought_after_D 57%
+    non-traps n= 30 sell SOL   1553.7: insider 1%  top10 14%  other_pre_holder 27%  bought_after_D 57%
+  Law 5: traps caught per day (full stream estimate = census count / span / 0.05), and lift
+    F1_dev_hold        183/day    F2_top1            285/day    F3_top10           448/day    F4_insiders        143/day    F5_thin              0/day    F6_net_sell        163/day    F7_crew             61/day    F8_wash            143/day    F9_dev_sold        306/day    F10_low              0/day    F11_stalled        163/day    F12_spike           61/day    F13_flippers       265/day    F14_rt_slot        122/day
+    signals/day if A_law3_core:     510  (census n=25)
+    signals/day if B_law3_flow:      20  (census n=1)
+    signals/day if C_everything:       0  (census n=0)
+    signals/day if D_momentum:     591  (census n=29)
+    signals/day if E_momentum_A:       0  (census n=0)
+    signals/day if momentum only:     591
+
+######## D=600s  all=91 traction(real>=5)=31 momentum(real>=5 & rising)=18
+  Law 1: big win = net(b) >= +100%; in traction stratum
+    base: traps 12  big wins 1  win>0 4  of 31
+    F1_dev_hold   removes  10: traps   4, big wins  0/1, winners(>0)  1
+    F2_top1       removes  15: traps   4, big wins  0/1, winners(>0)  1
+    F3_top10      removes  23: traps  11, big wins  1/1, winners(>0)  3
+    F4_insiders   removes   7: traps   2, big wins  0/1, winners(>0)  0
+    F8_wash       removes  15: traps   8, big wins  0/1, winners(>0)  1
+    F9_dev_sold   removes  18: traps   7, big wins  1/1, winners(>0)  3
+    F13_flippers  removes  10: traps   4, big wins  0/1, winners(>0)  0
+    F6_net_sell   removes  13: traps   8, big wins  0/1, winners(>0)  1
+  Law 4: momentum set, entry at D+L, exit at the same absolute time D+30min
+    L= -60s  n=  18 mean=-0.126 [-0.431,+0.292] med=-0.320 win=0.17  (curve completed before entry: 0)
+    L= -30s  n=  18 mean=-0.225 [-0.475,+0.095] med=-0.312 win=0.17  (curve completed before entry: 0)
+    L=  +0s  n=  18 mean=-0.282 [-0.500,-0.022] med=-0.388 win=0.17  (curve completed before entry: 0)
+    L= +30s  n=  18 mean=-0.198 [-0.496,+0.217] med=-0.356 win=0.17  (curve completed before entry: 0)
+    L= +60s  n=  18 mean=-0.287 [-0.501,-0.035] med=-0.350 win=0.17  (curve completed before entry: 0)
+    L=+120s  n=  18 mean=-0.247 [-0.452,+0.007] med=-0.323 win=0.17  (curve completed before entry: 0)
+    buy SOL in the 120 s before D: 249.2, in the 120 s after: 253.4 (momentum set, summed)
+  Law 2: sell SOL in the 30 min after entry, by who the seller was at the decision (traction set)
+    traps     n= 12 sell SOL   1807.3: insider 1%  top10 13%  other_pre_holder 31%  bought_after_D 56%
+    non-traps n= 19 sell SOL   1306.5: insider 1%  top10 16%  other_pre_holder 19%  bought_after_D 63%
+  Law 5: traps caught per day (full stream estimate = census count / span / 0.05), and lift
+    F1_dev_hold         82/day    F2_top1             82/day    F3_top10           224/day    F4_insiders         41/day    F5_thin              0/day    F6_net_sell        163/day    F7_crew              0/day    F8_wash            163/day    F9_dev_sold        143/day    F10_low              0/day    F11_stalled        163/day    F12_spike           20/day    F13_flippers        82/day    F14_rt_slot         41/day
+    signals/day if A_law3_core:     163  (census n=8)
+    signals/day if B_law3_flow:      41  (census n=2)
+    signals/day if C_everything:       0  (census n=0)
+    signals/day if D_momentum:     367  (census n=18)
+    signals/day if E_momentum_A:      20  (census n=1)
+    signals/day if momentum only:     367
