@@ -13,6 +13,11 @@ Ký hiệu nguồn:
 - **[S]**: chỉ thấy qua đoạn trích của kết quả tìm kiếm;
 - **[V]**: số liệu của vendor, chưa kiểm chứng.
 
+> **Cập nhật 08/10/2026.** Kết quả kiểm chứng, vòng vá đầu tiên và sổ filter sống nằm ở [`SIEVE_FILTERS.md`](SIEVE_FILTERS.md); khối đăng ký trước ở [`PREREG-SIEVE-R1.md`](PREREG-SIEVE-R1.md).
+> - Chuỗi tầng 1 của v1 (mục 5) đã **nghỉ hưu** với vai trò chuỗi veto: trên holdout nó gắn cờ 59/61 dòng qua cổng, tức là gần như chặn hết.
+> - Chain active hiện tại là cổng 11,66 SOL (tính ở trạng thái vào) cộng với SH-DEV-1 hoặc N-MMAAS-WAVE-STREAM.
+> - Luật 5 ("7 ngày không bắt gì thì cắt") được thay bằng quy trình hằng tuần có version, shadow và red team.
+
 ## Tóm tắt
 
 1. Năm luật đúng về tinh thần: nghi ngờ mặt tiền, hỏi ai là người thua, đòi đo mọi thứ. Nhưng ba trong năm luật đang đo sai thứ cần đo (luật 1, 2 và 5).
@@ -266,6 +271,8 @@ Bot **riêng tư, chỉ chủ bot dùng**. Bot **không bao giờ in chữ "MUA"
 Coin không qua cổng không được chấm, nhưng kết quả của nó vẫn được ghi.
 
 **Tầng 1 (miễn phí, từ luồng giao dịch; ngưỡng đóng băng, không chỉnh)**
+
+*(08/10: tầng này đã nghỉ hưu với vai trò chuỗi veto; các cờ vẫn được ghi làm info. Xem `SIEVE_FILTERS.md` mục 4.)*
 - top-10 (tính từ giao dịch) ≥ 20% cung;
 - dev cộng creator giữ ròng ≥ 3%;
 - wash: các ví đổi chiều mua/bán ≥ 3 lần chiếm ≥ 30% tổng SOL giao dịch;
