@@ -91,14 +91,18 @@ Trên 226 kết quả đầu tiên (09/10, 15:05–17:05 UTC), các bộ lọc c
 
 Tỷ lệ 80–90% mà Rây hiện trước đó là số trong mẫu của kho sáng lập, nên Rây đã báo TRÁNH cho nhiều coin rồi vẫn tăng giá. Từ nay:
 
-- **Một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó.** Trong 7 ngày qua, nó phải đạt cả ba điều:
+- **Một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó, và được chấm bằng tiền.** Trong 7 ngày qua, nó phải đạt cả hai điều:
   - bật ≥ 30 lần, trên ≥ 10 coin;
-  - tỷ lệ bẫy khi bật cao hơn ít nhất 10 điểm so với các coin cùng tầng SOL, cùng mốc mà nó không bật, và cận dưới khoảng tin cậy 95% của nó cũng không thấp hơn tỷ lệ đó;
-  - tỷ lệ thắng khi bật không cao hơn của các coin đó.
-- **Đã được dùng thì giữ** khi vẫn còn cao hơn ít nhất 5 điểm và không nhiều thắng hơn. Hai mức "vào" và "giữ" khác nhau để bộ lọc không bật/tắt theo vài dòng dữ liệu: ngày 09/10, SH-SG-1 được xác nhận rồi tạm ngưng chỉ trong một giờ, khi mới có 30–40 dòng.
+  - ở những coin nó bật, vé 0,5 SOL lãi/lỗ trung bình **kém hơn ít nhất 10 điểm** so với các coin cùng tầng SOL, cùng mốc mà nó không bật; cận dưới khoảng tin cậy 95% (tính theo coin) cũng phải trên 0.
+- **Đã được dùng thì giữ** khi vẫn còn kém hơn ít nhất 5 điểm. Hai mức "vào" và "giữ" khác nhau để bộ lọc không bật/tắt theo vài dòng dữ liệu: ngày 09/10, SH-SG-1 được xác nhận rồi tạm ngưng chỉ trong một giờ, khi mới có 30–40 dòng.
+- **Vì sao chấm bằng tiền mà không bằng tỷ lệ bẫy** (đổi tối 09/10): đếm bẫy xếp hạng bộ lọc sai cả hai chiều. Trên 387 dòng:
+  - N-MMAAS-WAVE-STREAM bật nhiều hơn 7 điểm bẫy, nhưng vé ở coin nó chặn lại lời hơn 11 điểm, vì nó chặn cả coin thắng lớn;
+  - SH-SG-1 chỉ hơn 6 điểm bẫy, nhưng coin nó chặn lỗ thêm 21 điểm.
+
+  Tỷ lệ bẫy và thắng vẫn được tính và hiện để tham khảo.
 - **Bộ lọc chưa đủ dữ liệu hoặc không đạt** vẫn được tính, vẫn hiện (ghi "chưa xác nhận" hoặc "tạm ngưng") và vẫn được ghi vào nhật ký, nhưng không quyết định nhãn. Khi số liệu của nó đạt chuẩn, nó tự được dùng lại.
 - **Tầng của bộ lọc giữ nguyên:** bộ lọc chính cho TRÁNH, bộ lọc phụ cho CẢNH GIÁC, bộ lọc ngữ cảnh không bao giờ quyết định. Luật này không thăng hạng bộ lọc nào (thăng hạng theo PREREG-SIEVE-R1 mục 5).
-- **Tỷ lệ bẫy hiển thị** lấy từ nhật ký 7 ngày của coin mới, cùng tầng SOL và cùng mốc (cần ≥ 30 dòng; không đủ thì lấy cả tầng). Chưa đủ cả hai thì mới dùng kho sáng lập, và ghi rõ là số trong mẫu.
+- **Tỷ lệ bẫy hiển thị** lấy từ nhật ký 7 ngày của coin mới, cùng tầng SOL và cùng mốc (cần ≥ 30 dòng; không đủ thì lấy cả tầng). Chưa đủ cả hai thì mới dùng kho sáng lập, và ghi rõ là số trong mẫu. Đi kèm là lãi/lỗ trung bình của vé ở tầng đó, và **rủi ro của cùng tầng theo từng mốc**. Thời gian là yếu tố mạnh nhất đo được: tối 09/10, ở tầng 13–30 SOL, mốc 2 phút có 73% bẫy và vé lỗ trung bình −26%, còn mốc 10 phút (coin còn trụ) có 44% bẫy, vé khoảng −2%.
 - Luật được tính lại mỗi 10 phút (`RAY_RULES_REFRESH_S`). Trạng thái từng bộ lọc nằm ở mục *Nhật ký kết quả → Theo bộ lọc*; mã ở `app/live_rules.py`.
 
 Lúc 18:20 UTC ngày 09/10, trên 391 dòng, không còn bộ lọc chính hay phụ nào đạt: không có nhãn TRÁNH, không có CẢNH GIÁC. Mọi coin là KHÔNG THẤY CỜ, kèm tỷ lệ bẫy thực tế của tầng (ví dụ 13–30 SOL lúc 2 phút: khoảng 76–79%). Coin "không thấy cờ" vẫn phần lớn là bẫy; bộ lọc chỉ giúp được ở rìa.
@@ -107,7 +111,9 @@ Lúc 18:20 UTC ngày 09/10, trên 391 dòng, không còn bộ lọc chính hay p
 - **Curve quá nóng:** rất nhiều giao dịch ngay trước lúc chấm, khoảng +16 điểm bẫy ở cả hai phần.
 - **Wash:** ví đổi chiều liên tục, khoảng +13 điểm bẫy, rất ít coin thắng.
 
-Chúng được thêm thành RAY-HOT-v1 và RAY-WASH-v1 (tầng phụ, mã mới, đóng băng). Chúng cũng phải qua luật sống trên dữ liệu *sau khi deploy* mới được quyết định nhãn.
+Chúng được thêm thành RAY-HOT-v1 và RAY-WASH-v1 (tầng phụ, mã mới, đóng băng). Chúng cũng phải qua luật sống trên dữ liệu *sau khi deploy* mới được quyết định nhãn. Đến 21:10 UTC, chỉ trên dữ liệu sau deploy:
+- **RAY-WASH-v1** được xác nhận theo luật tiền: bật 48 lần, coin nó chặn lỗ thêm 28 điểm, khoảng tin cậy +4…+53.
+- **RAY-HOT-v1** suýt đạt: bật 67 lần, +23 điểm, khoảng tin cậy −1…+47.
 
 ## Cấu hình (biến môi trường)
 
@@ -118,7 +124,7 @@ Chúng được thêm thành RAY-HOT-v1 và RAY-WASH-v1 (tầng phụ, mã mới
 | `RAY_PASSWORD` | (không) | Mật khẩu HTTP Basic cho bảng điều khiển và API (tên người dùng tuỳ ý). Chưa đặt thì mọi trang riêng trả 503. |
 | `RAY_RPC_URL` | | URL HTTPS của RPC có `getTransactionsForAddress` (Helius, kèm key). Không đặt thì lấy `PH_SOLANA_WS_URL` (biến cũ trên Bunny) đổi sang https; không có cả hai thì dùng RPC công khai `api.mainnet-beta.solana.com` (miễn phí, chậm hơn). URL không bao giờ xuất hiện trong log hay lỗi. |
 | `RAY_RPC_RPS` | 10 (riêng), 2,5 (công khai) | Số yêu cầu mỗi giây. RPC công khai trả 429 từ khoảng 3/s. |
-| `RAY_DAILY_CREDITS` | 200000 | Trần credit Helius mỗi ngày (UTC). Tới trần thì ngừng chấm; census và đọc curve được vượt 25%. |
+| `RAY_DAILY_CREDITS` | 300000 | Trần credit Helius mỗi ngày (UTC). Tới trần thì ngừng chấm; census, đọc curve và kết quả được vượt 25%. 300k/ngày nằm trong 10 triệu/tháng của gói Helius Developer. |
 | `RAY_CHECKPOINTS_S` | `[120,300,600]` | Các mốc quyết định (giây). |
 | `RAY_HISTORY_MAX_TX` | 6000 | Trần giao dịch đọc cho một curve (~600 credit). |
 | `RAY_SYNC_WAITS_S` | `[3,5,8,10,14]` | Các lần chờ trước khi đọc lại phần đuôi lịch sử (tổng tối đa 40 s). |

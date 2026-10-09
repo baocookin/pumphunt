@@ -154,7 +154,18 @@ SUMMARY = {
 }
 
 
-LIVE_KEYS = ("status", "n", "trap_on", "trap_exp", "win_on", "win_exp")
+LIVE_KEYS = (
+    "status",
+    "n",
+    "trap_on",
+    "trap_exp",
+    "win_on",
+    "win_exp",
+    "net_on",
+    "net_exp",
+    "saved",
+    "saved_ci",
+)
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -205,8 +216,9 @@ def risk(real_d: float, age_s: float, fired_active: list[str], rules: Any = None
         return {"pct": None, "basis": "ngoài vùng đã đo", "n": 0}
     D = d_bucket(age_s)
     live = rules.base(b, D) if rules is not None else None
+    net_mean = None
     if live is not None:
-        n, k, basis = live
+        n, k, basis, net_mean = live
     else:
         n, k = BASE[b][D]
         basis = f"kho sáng lập (trong mẫu): tầng {b} SOL lúc {D // 60} phút"
@@ -224,6 +236,9 @@ def risk(real_d: float, age_s: float, fired_active: list[str], rules: Any = None
         if fn and ft / fn > best["pct"]:
             best = {"pct": ft / fn, "k": ft, "n": fn, "basis": src, "ci": wilson(ft, fn), "live": is_live}
     best["base"] = {"band": b, "D": D, "n": n, "k": k}
+    # the ticket's mean net in this band x decision time, and the band at each decision time
+    best["net_mean"] = net_mean
+    best["by_time"] = rules.by_time(b) if rules is not None else []
     if b == "5-13" and not best["live"]:
         best["note"] = "Tầng 5–13 SOL ít dữ liệu trên cổng: 2/78 dòng là bẫy, cả hai sát cổng."
     return best

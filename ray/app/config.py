@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     rpc_rps: float | None = None
     rpc_429_penalty_s: float = 2.0
     # Credits per UTC day. Scoring reads stop here; the census and the reserve reads may go 25% over.
-    daily_credits: int = 200_000
+    # 300k a day fits Helius Developer's 10M a month; Ray used ~240k on its first full-rate day.
+    daily_credits: int = 300_000
 
     # Launch census: the mint authority's history, read every `census_s` (10 credits per 100 creates).
     census_s: float = 60.0
