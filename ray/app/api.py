@@ -21,7 +21,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .config import settings
-from .engine import Engine, OnDemandLimit, ScoreBook
+from .engine import JOURNAL_FILE, Engine, OnDemandLimit, ScoreBook
+from .outcome import HOLD_S
+from .report import build as build_report
 from .rpc import BudgetExhausted, CreditMeter, Rpc, describe_error
 from .sieve import FROZEN_PROBLEMS, POOL_TEXT, registry
 from .telegram import TelegramBot
@@ -152,6 +154,8 @@ def _compact(sc: dict[str, Any]) -> dict[str, Any]:
     fired = [f["id"] for f in (sc.get("active") or []) + (sc.get("shadow") or []) if f.get("fired")]
     info = [f["id"] for f in sc.get("info") or [] if f.get("fired")]
     rk = sc.get("risk") or {}
+    o = sc.get("outcome")
+    entry = sc.get("entry")
     return {
         "mint": sc["mint"],
         "symbol": sc.get("symbol"),
@@ -167,6 +171,8 @@ def _compact(sc: dict[str, Any]) -> dict[str, Any]:
         "risk": {"pct": rk.get("pct"), "basis": rk.get("basis"), "n": rk.get("n")},
         "fired": fired,
         "info": info,
+        "outcome": {k: o.get(k) for k in ("status", "net", "label", "why")} if o else None,
+        "due": round(float(entry["at"]) + HOLD_S, 1) if entry and not o else None,
     }
 
 
@@ -229,6 +235,30 @@ async def score_now(mint: str):
         raise HTTPException(502, f"Lỗi đọc RPC: {describe_error(exc)}") from None
     except Exception as exc:  # noqa: BLE001 - answered without a traceback, which could carry the URL
         raise HTTPException(500, describe_error(exc)) from None
+
+
+@api.get("/report", dependencies=[Depends(require_owner)])
+def report(days: int = 7):
+    """The outcome journal of the last `days` days against the founding pool."""
+    days = max(1, min(int(days), 90))
+    now = time.time()
+    lines = state.book.outcome_lines(now - days * 86_400, now) if state.book else []
+    return build_report(lines, now, days, state.engine.outcomes.pending() if state.engine else 0)
+
+
+@api.get("/journal", dependencies=[Depends(require_owner)])
+def journal():
+    """The journal's daily files: scores, outcomes and the archived rows."""
+    return {"files": state.book.journal_files() if state.book else []}
+
+
+@api.get("/journal/{name}", dependencies=[Depends(require_owner)])
+def journal_file(name: str):
+    path = state.book.dir / name if state.book else None
+    if path is None or not JOURNAL_FILE.fullmatch(name) or not path.is_file():
+        raise HTTPException(404, "Không có file này.")
+    media = "application/gzip" if name.endswith(".gz") else "application/x-ndjson"
+    return FileResponse(path, media_type=media, filename=name)
 
 
 @api.get("/registry", dependencies=[Depends(require_owner)])

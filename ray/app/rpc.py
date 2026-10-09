@@ -75,9 +75,10 @@ def http_url_from_ws(ws_url: str | None) -> str | None:
 
 class CreditMeter:
     """Credits spent per UTC day, by kind of read. Scoring reads (history, on-demand) stop at the cap;
-    the cheap reads that keep the live view running (census, reserves) may go 25% over it."""
+    the cheap reads that keep the live view and the journal running (census, reserves, outcomes) may
+    go 25% over it."""
 
-    CHEAP = {"census", "poll"}
+    CHEAP = {"census", "poll", "outcome"}
 
     def __init__(self, daily_cap: int, clock: Callable[[], float] = time.time):
         self.cap = int(daily_cap)

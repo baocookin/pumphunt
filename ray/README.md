@@ -19,6 +19,7 @@ mốc D    2/5/10 ph  lần đọc curve đầu tiên tới mốc D quyết đ�
 chấm               đọc mọi giao dịch thành công của curve (cũ trước, 100/trang), đọc lại phần đuôi
                     tới khi phát lại đúng reserve của lần đọc quyết định (chỉ mục giao dịch trễ
                     tài khoản 15–30 s trên RPC công khai), chạy bộ lọc, ghi điểm
+kết quả  +30 phút   vé 0,5 SOL mua lúc chấm được định giá lại 30 phút sau: bẫy, thắng hay không
 ```
 
 Một mốc D chỉ được quyết định trong 45 s sau D; curve phát hiện muộn hơn thì mốc đó bị bỏ (đếm là `missed`). Ngoài ra có thể chấm bất kỳ mint nào ngay lập tức (nút **Chấm ngay** trên bảng điều khiển, hoặc Telegram), tối đa 60 lần/giờ.
@@ -40,6 +41,44 @@ Một mốc D chỉ được quyết định trong 45 s sau D; curve phát hiệ
 
 Điểm nào cũng ghi chất lượng dữ liệu: số giao dịch đã đọc, chuỗi reserve có liền không, lịch sử có khớp tài khoản curve lúc quyết định không, và phải chờ chỉ mục bao lâu. Một điểm "chưa khớp" được chấm tới giao dịch cuối đọc được, tức là sớm hơn lúc quyết định.
 
+## Nhật ký kết quả và báo cáo tuần
+
+Mỗi lần chấm đầy đủ (ở các mốc, và chấm tay) được đối chiếu 30 phút sau theo đúng định nghĩa của nghiên cứu (`research/sieve/journal.py`):
+- **Vé:** 0,5 SOL mua ở reserve lúc chấm, phí của curve mỗi chiều (1,25%) và 0,002 SOL chi phí cố định.
+- **Bán ra:** định giá trên curve 30 phút sau; curve tốt nghiệp trước đó thì coi như bán lúc tốt nghiệp.
+- **Nhãn:** **bẫy** khi lỗ ≥ 50%, **thắng** khi lãi ≥ 100%.
+
+Hai khác biệt nhỏ so với nghiên cứu: Rây mua ngay ở lần đọc quyết định (nghiên cứu mua sau đó một slot), và 30 phút tính theo đồng hồ (nghiên cứu đếm slot). Kết quả không đổi nhãn nào; nó chỉ được ghi lại.
+
+Cách đọc:
+- **Đúng giờ:** đọc tài khoản curve, gộp 100 curve một lần gọi (1 credit).
+- **Curve đã tốt nghiệp, hoặc đọc trễ** (ví dụ app vừa khởi động lại): đọc lịch sử giao dịch tới đúng thời điểm đó (10 credit), lấy giao dịch cuối cùng làm điểm bán.
+
+Phần chưa có kết quả được đọc lại sau mỗi lần khởi động.
+
+**Báo cáo** (mục *Nhật ký kết quả* trên bảng điều khiển, hoặc `/api/report?days=7`) chỉ tính các lần chấm ở mốc, đặt cạnh số của kho sáng lập:
+- **Theo phán quyết:** tỷ lệ bẫy thực tế so với tỷ lệ Rây đã báo.
+- **Theo tầng SOL và mốc.**
+- **Theo từng bộ lọc:** khi bật thì bao nhiêu là bẫy, bao nhiêu thắng.
+- **Bẫy lọt lưới:** nhãn KHÔNG THẤY CỜ, ÍT HOẠT ĐỘNG, CẢNH GIÁC hoặc THIẾU DỮ LIỆU nhưng là bẫy.
+- **Báo động nhầm:** TRÁNH nhưng thắng.
+
+Số của kho sáng lập là số trong mẫu; số trong báo cáo là trên coin mới.
+
+**File nhật ký** nằm trong `<data>/ray/`, mỗi ngày (UTC) một file, tải ở mục *Tải nhật ký* hoặc `/api/journal/<tên>` (cần mật khẩu):
+
+| File | Nội dung |
+|---|---|
+| `scores-YYYY-MM-DD.jsonl` | Mọi lần chấm, đầy đủ cờ và giá trị thô. |
+| `outcomes-YYYY-MM-DD.jsonl` | Kết quả 30 phút, mỗi dòng kèm phán quyết, cờ đã bật, tầng SOL, tỷ lệ Rây đã báo và reserve lúc mua (theo ngày của lần chấm). |
+| `rows-YYYY-MM-DD.jsonl.gz` | Toàn bộ giao dịch tới mốc cuối của mỗi coin được chấm ở mốc, cùng định dạng census của nghiên cứu (khoảng 20 MB/ngày; tắt bằng `RAY_ARCHIVE_ROWS=false`). |
+
+**Vá bộ lọc mỗi tuần:**
+1. Mở báo cáo 7 ngày và đọc các bẫy lọt lưới trước: cờ nào suýt bật, giống kiểu nào đã biết.
+2. Bộ lọc mới luôn mang **mã mới** trong `research/sieve/filters.py` và được đóng băng bằng hash; không bao giờ sửa bộ lọc cũ.
+3. Đo bộ lọc mới trên `rows-*.jsonl.gz` với nhãn trong `outcomes-*.jsonl` của các tuần trước, không cần đọc lại chain.
+4. Thêm nhãn tiếng Việt và số đo vào `app/sieve.py`, rồi deploy.
+
 ## Cấu hình (biến môi trường)
 
 Đủ dùng chỉ với `RAY_PASSWORD`; mọi thứ khác có mặc định. Biến danh sách viết dạng JSON, ví dụ `RAY_TELEGRAM_PUSH=["TRANH"]`.
@@ -56,14 +95,16 @@ Một mốc D chỉ được quyết định trong 45 s sau D; curve phát hiệ
 | `RAY_WORKERS` | 4 | Số curve chấm song song. |
 | `RAY_SCORE_BELOW_GATE` | false | Chấm cả curve dưới cổng (đọc thêm ~1.000 lịch sử/ngày, vô ích vì không có phủ quyết dưới cổng). |
 | `RAY_ONDEMAND_PER_HOUR` | 60 | Số lần "Chấm ngay" mỗi giờ. |
-| `RAY_DATA_DIR` / `PH_DATA_DIR` | `/data` trong image | Điểm ghi vào `<data>/ray/scores-YYYY-MM-DD.jsonl`. |
+| `RAY_DATA_DIR` / `PH_DATA_DIR` | `/data` trong image | Nhật ký ghi vào `<data>/ray/` (xem mục trên). |
+| `RAY_OUTCOME_TICK_S` | 5 | Bao lâu kiểm tra các kết quả 30 phút đến hạn một lần. |
+| `RAY_ARCHIVE_ROWS` | true | Lưu giao dịch của các coin được chấm (`rows-*.jsonl.gz`). |
 | `RAY_TELEGRAM_BOT_TOKEN`, `RAY_TELEGRAM_CHAT_ID` | | Bot Telegram riêng (xem dưới). |
 | `RAY_TELEGRAM_PUSH` | `[]` | Nhãn tự đẩy về Telegram, ví dụ `["TRANH","KHONG_THAY_CO"]`. |
 | `RAY_PUBLIC_URL` | | Link bảng điều khiển gắn vào tin Telegram. |
 
 ## Chi phí credit (Helius)
 
-`getTransactionsForAddress` tính 10 credit cho mỗi 100 giao dịch trả về (tối thiểu 10), `getMultipleAccounts` 1 credit cho tối đa 100 curve. Ước tính: census ~14k/ngày, đọc curve ~17–35k/ngày, lịch sử các curve được chấm ~75k/ngày; tổng ~110–130k/ngày, khoảng 3,3–3,9 triệu/tháng. Số đã tiêu hiện trên bảng điều khiển ("credit hôm nay") và trong `/api/state`.
+`getTransactionsForAddress` tính 10 credit cho mỗi 100 giao dịch trả về (tối thiểu 10), `getMultipleAccounts` 1 credit cho tối đa 100 curve. Ước tính: census ~14k/ngày, đọc curve ~17–35k/ngày, lịch sử các curve được chấm ~75k/ngày; tổng ~110–130k/ngày, khoảng 3,3–3,9 triệu/tháng. Nhật ký kết quả thêm vài chục credit/ngày, cộng khoảng 10 credit cho mỗi coin tốt nghiệp trong 30 phút sau khi chấm. Số đã tiêu hiện trên bảng điều khiển ("credit hôm nay") và trong `/api/state`.
 
 Không có Helius thì Rây chạy bằng RPC công khai (đã kiểm 09/10/2026 là có `getTransactionsForAddress`): miễn phí nhưng 2,5 yêu cầu/giây, chỉ mục trễ 15–30 s nên điểm ra muộn hơn mốc khoảng 20–40 s, và có thể bị chặn nếu IP dùng chung bị giới hạn. Trần credit vẫn được đếm như Helius để không lạm dụng.
 
@@ -75,7 +116,7 @@ Không có Helius thì Rây chạy bằng RPC công khai (đã kiểm 09/10/2026
 
 ## Bảng điều khiển và API
 
-`/` (cần mật khẩu): trạng thái, ô **Chấm ngay**, các curve đang sống (≥ 2 SOL), điểm gần đây có lọc theo nhãn (DƯỚI CỔNG ẩn mặc định), bấm vào một dòng để xem chi tiết: cờ nào bật với giá trị thô, bằng chứng trong kho sáng lập, chất lượng dữ liệu, link pump.fun và Solscan.
+`/` (cần mật khẩu): trạng thái, ô **Chấm ngay**, các curve đang sống (≥ 2 SOL), điểm gần đây có lọc theo nhãn (DƯỚI CỔNG ẩn mặc định) kèm kết quả 30 phút, bấm vào một dòng để xem chi tiết: cờ nào bật với giá trị thô, bằng chứng trong kho sáng lập, chất lượng dữ liệu, link pump.fun và Solscan. Mục *Nhật ký kết quả* là báo cáo 1, 7 hoặc 30 ngày.
 
 | Đường dẫn | Quyền | |
 |---|---|---|
@@ -84,6 +125,8 @@ Không có Helius thì Rây chạy bằng RPC công khai (đã kiểm 09/10/2026
 | `GET /api/token/<mint>` | mật khẩu | Mọi điểm của một mint. |
 | `POST /api/score/<mint>` | mật khẩu | Chấm ngay. |
 | `GET /api/registry` | mật khẩu | Định nghĩa và bằng chứng của từng bộ lọc. |
+| `GET /api/report?days=7` | mật khẩu | Báo cáo nhật ký kết quả (1–90 ngày). |
+| `GET /api/journal`, `GET /api/journal/<tên>` | mật khẩu | Danh sách và tải các file nhật ký. |
 | `GET /api/files`, `GET /api/export/file/<tên>` | công khai | File dữ liệu trên volume, gồm dữ liệu nghiên cứu cũ (`sniper-…jsonl`, `swaps-…`, …), như trước. |
 
 ## Deploy (Bunny Magic Containers)
@@ -118,7 +161,9 @@ Docker: `docker build -f ray/Dockerfile -t ray .` từ gốc repo. Image chép `
 | `app/live.py` | Census, lịch đọc curve, các mốc quyết định. |
 | `app/history.py` | Lịch sử curve đọc dần, kiểm khớp với tài khoản curve. |
 | `app/sieve.py` | Nạp bộ lọc đóng băng, chạy chúng, nhãn, tỷ lệ bẫy. |
-| `app/engine.py` | Vòng lặp, hàng chờ chấm, sổ điểm JSONL. |
+| `app/engine.py` | Vòng lặp, hàng chờ chấm, sổ điểm và các file nhật ký. |
+| `app/outcome.py` | Kết quả 30 phút: công thức vé của nghiên cứu, đọc đúng giờ hoặc từ lịch sử. |
+| `app/report.py` | Báo cáo nhật ký so với kho sáng lập. |
 | `app/api.py`, `app/static/index.html` | API và bảng điều khiển. |
 | `app/telegram.py` | Bot Telegram riêng. |
 

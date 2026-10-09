@@ -33,6 +33,7 @@ class Token:
     history: History | None = None
     scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     pending: int = 0  # scorings queued or running; the history is kept until they finish
+    archived: bool = False  # its scored trades are in the row archive
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     @property
@@ -207,8 +208,9 @@ class Tracker:
                 out.append((tok, D, outcome))
         return out
 
-    def retire(self, now: float) -> int:
-        """Move launches past the last decision time (or graduated) out of the live set."""
+    def retire(self, now: float) -> list[Token]:
+        """Move launches past the last decision time (or graduated) out of the live set; returns them
+        (the engine frees their histories)."""
         gone = []
         for mint, tok in self.live.items():
             age = tok.age(now)
@@ -216,12 +218,12 @@ class Tracker:
             graduated = bool(tok.state and tok.state["complete"] and age > 60)
             if age > self.horizon or (finished and age > max(self.cfg.checkpoints_s)) or graduated:
                 gone.append(mint)
+        out = []
         for mint in gone:
             tok = self.live.pop(mint)
-            if not tok.pending:
-                tok.history = None  # the trades are not needed any more; the scores stay
             self.adopt(tok)
-        return len(gone)
+            out.append(tok)
+        return out
 
     def counts(self, now: float) -> dict[str, int]:
         hot = sum(1 for t in self.live.values() if t.state and t.state["real"] >= self.cfg.hot_min_sol)
