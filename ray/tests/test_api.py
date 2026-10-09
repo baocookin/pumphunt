@@ -47,6 +47,22 @@ def test_without_a_password_everything_private_is_locked(client, monkeypatch):
     assert client.get("/api/health").status_code == 200
 
 
+def test_the_locked_answer_says_when_a_password_was_sent(client, monkeypatch):
+    monkeypatch.setattr(settings, "password", None)
+    assert "đã gửi mật khẩu" not in client.get("/api/state").json()["detail"]
+    r = client.get("/api/state", auth=("a", "b"))
+    assert r.status_code == 503 and "đã gửi mật khẩu" in r.json()["detail"]
+    assert "đã gửi mật khẩu" in client.get("/", auth=("a", "b")).text
+
+
+def test_no_answer_may_be_kept_by_the_cdn(client):
+    for path, auth in (("/api/health", None), ("/api/state", ("a", "pw")), ("/", ("a", "pw")), ("/", None)):
+        r = client.get(path, auth=auth)
+        assert r.headers["cache-control"] == "no-store, private", (path, r.status_code)
+    r = client.get("/api/export/file/sniper-2026-10-07.jsonl")
+    assert r.headers["cache-control"] == "no-store, private"
+
+
 def test_scoring_needs_a_valid_mint_and_a_running_engine(client):
     assert client.post("/api/score/not-a-mint", auth=("a", "pw")).status_code == 400
     assert client.post(f"/api/score/{MINT}", auth=("a", "pw")).status_code == 503
