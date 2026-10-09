@@ -1,7 +1,8 @@
 # Rây: the real-time scorer. Build from the repository root:
 #   docker build -f ray/Dockerfile -t ray .
 # The frozen sieve filters are copied from research/sieve/filters.py unchanged (hash-checked at start).
-FROM python:3.13-slim
+# AWS's public mirror of Docker Hub's official image: GitHub runners hit Docker Hub's pull limit (429)
+FROM public.ecr.aws/docker/library/python:3.13-slim
 WORKDIR /app
 COPY ray/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
