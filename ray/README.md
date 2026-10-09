@@ -70,9 +70,10 @@ Số của kho sáng lập là số trong mẫu; số trong báo cáo là trên 
 | File | Nội dung |
 |---|---|
 | `scores-YYYY-MM-DD.jsonl` | Mọi lần chấm, đầy đủ cờ và giá trị thô. |
-| `outcomes-YYYY-MM-DD.jsonl` | Kết quả 30 phút, mỗi dòng kèm phán quyết, cờ đã bật, tầng SOL, tỷ lệ Rây đã báo và reserve lúc mua (theo ngày của lần chấm). |
+| `outcomes-YYYY-MM-DD.jsonl` | Kết quả 30 phút, mỗi dòng kèm phán quyết, cờ đã bật, tầng SOL, tỷ lệ Rây đã báo (`risk`), tỷ lệ khi không có mô hình (`base_risk`), xác suất của mô hình (`model_p`), các đặc trưng lúc chấm (`features`) và reserve lúc mua (theo ngày của lần chấm). |
 | `rows-YYYY-MM-DD.jsonl.gz` | Toàn bộ giao dịch tới mốc cuối của mỗi coin được chấm ở mốc, cùng định dạng census của nghiên cứu (khoảng 20 MB/ngày; tắt bằng `RAY_ARCHIVE_ROWS=false`). |
 | `wallets.json.gz` | Bộ nhớ ví (xem *Bộ nhớ ví* bên dưới). Mất file thì Rây dựng lại từ `rows-*` và `outcomes-*` của 2 ngày gần nhất. |
+| `rules.json`, `model.json` | Bộ lọc đang được dùng, và mô hình rủi ro học gần nhất; giữ qua lần khởi động lại. |
 
 **Vá bộ lọc mỗi tuần:**
 1. Mở báo cáo 7 ngày và đọc các bẫy lọt lưới trước: cờ nào suýt bật, giống kiểu nào đã biết.
@@ -136,6 +137,27 @@ Ba bộ lọc này cũng chỉ quyết định nhãn sau khi luật sống xác 
   - Trạng thái hiện ở `/api/state` (khoá `wallets`).
 - **Bộ lọc gốc của Rây** (`app/native.py`): bộ lọc đọc bộ nhớ ví không nằm được trong gói nghiên cứu, nên được định nghĩa ở đây. Chúng cùng kỷ luật đóng băng: hash phủ cả hàm lẫn các định nghĩa đặc trưng và cách bộ nhớ đếm. Sửa tại chỗ sẽ hiện trên health check.
 
+## Mô hình rủi ro (shadow) và ứng viên bộ lọc (từ 09/10/2026)
+
+Đăng ký ở [docs/PREREG-RAY-L3.md](../docs/PREREG-RAY-L3.md).
+
+- **Mô hình rủi ro** (`app/model.py`):
+  - Tính xác suất vé 0,5 SOL mua lúc chấm là bẫy sau 30 phút, từ 20 đặc trưng lúc chấm cùng tầng SOL và mốc. Đây là hồi quy logistic, phạt L2 (λ = 30).
+  - Học lại mỗi giờ trên nhật ký 7 ngày, cần ≥ 300 dòng có đặc trưng.
+  - Mỗi lần chấm ghi lại xác suất của mô hình (`model_p`) bên cạnh tỷ lệ Rây hiển thị khi không có mô hình (`base_risk`). Mô hình chỉ học từ kết quả đã có trước lúc chấm, nên đây là bản ghi trên dữ liệu nó chưa thấy.
+- **Khi nào mô hình được dùng:** nó thay tỷ lệ tầng × mốc khi trên ≥ 2 ngày trọn (mỗi ngày ≥ 300 dòng):
+  - log-loss của nó thấp hơn, và khoảng tin cậy 95% của phần tốt hơn nằm trên 0;
+  - ngày gần nhất cũng tốt hơn.
+  
+  Không đạt thì Rây quay về tỷ lệ tầng × mốc. Nhãn không bao giờ phụ thuộc mô hình.
+- **Kết quả thử** trên 837 dòng ngày 09/10 (60% đầu học, 40% sau kiểm): log-loss 0,616 so với 0,678 của tầng × mốc. Hiệu chỉnh khớp: báo 32% thì thực tế 32%, báo 69% thì thực tế 70%.
+- **Ứng viên bộ lọc** (`app/candidates.py`): mỗi giờ, Rây tự chạy lại phương pháp của vòng sống 2 trên nhật ký 7 ngày:
+  - tìm ở 60% đầu, kiểm nguyên ngưỡng ở 40% sau;
+  - ứng viên phải qua chuẩn vào của luật sống và kiểm đa so sánh Benjamini–Hochberg (q = 0,10);
+  - chỉ tìm cảnh báo.
+  
+  Ứng viên hiện ở cuối mục *Nhật ký kết quả* và không đổi gì. Một ứng viên chỉ thành bộ lọc khi bạn đồng ý: nó được đăng ký với mã mới, đóng băng, rồi phải qua luật sống như mọi bộ lọc.
+
 ## Cấu hình (biến môi trường)
 
 Đủ dùng chỉ với `RAY_PASSWORD`; mọi thứ khác có mặc định. Biến danh sách viết dạng JSON, ví dụ `RAY_TELEGRAM_PUSH=["TRANH"]`.
@@ -157,6 +179,7 @@ Ba bộ lọc này cũng chỉ quyết định nhãn sau khi luật sống xác 
 | `RAY_ARCHIVE_ROWS` | true | Lưu giao dịch của các coin được chấm (`rows-*.jsonl.gz`). |
 | `RAY_RULES_REFRESH_S` | 600 | Bao lâu tính lại luật sống của bộ lọc từ nhật ký. |
 | `RAY_WALLETS_SAVE_S` | 900 | Bao lâu cắt tỉa và lưu bộ nhớ ví (`wallets.json.gz`). |
+| `RAY_MODEL_REFIT_S` | 3600 | Bao lâu học lại mô hình rủi ro và quét lại ứng viên bộ lọc. |
 | `RAY_TELEGRAM_BOT_TOKEN`, `RAY_TELEGRAM_CHAT_ID` | | Bot Telegram riêng (xem dưới). |
 | `RAY_TELEGRAM_PUSH` | `[]` | Nhãn tự đẩy về Telegram, ví dụ `["TRANH","KHONG_THAY_CO"]`. |
 | `RAY_PUBLIC_URL` | | Link bảng điều khiển gắn vào tin Telegram. |
@@ -227,6 +250,8 @@ Docker: `docker build -f ray/Dockerfile -t ray .` từ gốc repo. Image chép `
 | `app/features.py` | Đặc trưng lúc chấm: hoạt động trên curve, lệnh mua, dòng tiền, hồ sơ ví mua sớm. |
 | `app/wallets.py` | Bộ nhớ ví: ví mua sớm ở các coin trước và kết quả của các coin đó. |
 | `app/native.py` | Bộ lọc gốc của Rây (đọc bộ nhớ ví), đóng băng bằng hash. |
+| `app/model.py` | Mô hình rủi ro shadow, bản ghi ngoài mẫu và luật chuyển. |
+| `app/candidates.py` | Quét ứng viên bộ lọc mỗi giờ. |
 | `app/api.py`, `app/static/index.html` | API và bảng điều khiển. |
 | `app/telegram.py` | Bot Telegram riêng. |
 

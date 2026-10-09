@@ -240,10 +240,11 @@ function scoreCard(sc) {
     <div class="grid">
       <div class="kv"><b>${age(sc.age_s)}</b><span>tuổi</span></div>
       <div class="kv"><b>${sol(sc.real)}</b><span>SOL thật lúc chấm</span></div>
-      <div class="kv"><b>${pct(rk.pct)}</b><span>tỷ lệ bẫy lịch sử${esc(ci)}</span></div>
+      <div class="kv"><b>${pct(rk.pct)}</b><span>${rk.model ? "xác suất bẫy (mô hình)" : "tỷ lệ bẫy lịch sử"}${esc(ci)}</span></div>
       <div class="kv"><b>${sc.floor == null ? "—" : pct(sc.floor)}</b><span>sàn lỗ trên curve (vé 0,5 SOL)</span></div>
     </div>
     <p class="muted">${esc(rk.basis || "")}${rk.n ? ", n = " + rk.n : ""}${rk.net_mean != null ? `; vé 0,5 SOL ở đây lãi/lỗ trung bình ${signed(rk.net_mean)}` : ""}${rk.note ? ". " + esc(rk.note) : ""}</p>
+    ${modelLine(sc)}
     ${rk.by_time && rk.by_time.length ? `<p class="muted">Cùng tầng theo mốc (coin mới 7 ngày): ${rk.by_time.map(t => `${t.D / 60} phút ${pct(t.trap)} bẫy, vé ${signed(t.net)} (n = ${t.n})`).join(" · ")}.</p>` : ""}
     ${sc.outcome ? `<p>Sau 30 phút: ${outcomeText(sc.outcome)} <span class="muted">(vé 0,5 SOL mua lúc chấm${sc.outcome.why === "grad" ? ", bán lúc tốt nghiệp" : ""})</span></p>`
       : sc.entry ? `<p class="muted">Kết quả 30 phút có lúc ${clock(sc.entry.at + 1800)}.</p>` : ""}
@@ -258,6 +259,53 @@ function scoreCard(sc) {
   </div>`;
 }
 
+function modelLine(sc) {
+  const m = sc.model, rk = sc.risk || {};
+  if (!m) return "";
+  if (rk.model) return `<p class="muted">Tỷ lệ tầng × mốc (trước khi có mô hình): ${pct(rk.base_pct)}.</p>`;
+  return `<p class="muted">Mô hình rủi ro (đang kiểm, chưa dùng): ${pct(m.p)} khả năng bẫy. Chỉ để đối chiếu; nó chưa thay tỷ lệ lịch sử cho tới khi tốt hơn trên những ngày nó chưa thấy.</p>`;
+}
+function num(x) {
+  if (x == null) return "—";
+  const v = Math.abs(x) >= 10 ? String(Math.round(x)) : String(Number(Number(x).toPrecision(3)));
+  return v.replace(".", ",");
+}
+function loss(x) { return x == null ? "—" : Number(x).toFixed(3).replace(".", ","); }
+function lossGain(x) { return x == null ? "—" : (x >= 0 ? "+" : "−") + loss(Math.abs(x)); }
+function modelSection(m) {
+  if (!m) return "";
+  const ev = m.eval || {};
+  const head = m.trained_at
+    ? `Học lúc ${clock(m.trained_at)} trên ${m.n} kết quả 7 ngày qua (${m.traps} bẫy).`
+    : "Chưa học: cần ≥ 300 kết quả có đặc trưng, trong đó ≥ 50 bẫy và ≥ 50 không bẫy.";
+  const status = m.active
+    ? '<span class="win">Đang dùng: tỷ lệ bẫy hiển thị là xác suất của mô hình</span>'
+    : '<span class="muted">Đang kiểm (shadow): chưa thay tỷ lệ tầng × mốc</span>';
+  const days = (ev.days || []).map(d => `<tr><td>${esc(d.day)}${d.complete ? "" : ' <span class="muted">(chưa hết ngày)</span>'}</td>
+    <td class="num">${d.n}</td><td class="num">${loss(d.model)}</td><td class="num">${loss(d.base)}</td><td class="num"><b>${lossGain(d.gain)}</b></td></tr>`).join("");
+  const gain = ev.gain == null ? "—" : `${lossGain(ev.gain)}${ev.gain_ci ? ` (KTC 95% ${lossGain(ev.gain_ci[0])} … ${lossGain(ev.gain_ci[1])})` : ""}`;
+  const cal = (ev.calibration || []).map(c => `<tr><td>${pct(c.lo)}–${pct(c.hi)}</td><td class="num">${c.n}</td>
+    <td class="num">${pct(c.predicted)}</td><td class="num">${pct(c.observed)}</td><td class="num">${pct(c.base)}</td></tr>`).join("");
+  const f = m.factors || {up: [], down: []};
+  const names = list => list.map(x => esc(x.vi)).join(", ") || "—";
+  return `<h3>Mô hình rủi ro</h3><p>${status}. ${head}</p>
+    <p class="muted">Xác suất vé 0,5 SOL mua lúc chấm là bẫy sau 30 phút, tính từ 20 đặc trưng lúc chấm cùng tầng SOL và mốc (hồi quy logistic, học lại mỗi giờ). Mỗi lần chấm ghi lại xác suất của mô hình đã học trước đó, nên các số dưới đây đo trên dữ liệu mô hình chưa thấy. Mô hình chỉ thay tỷ lệ tầng × mốc khi đạt cả ba: trên ≥ 2 ngày trọn (mỗi ngày ≥ 300 dòng) log-loss của nó thấp hơn; khoảng tin cậy 95% của phần tốt hơn nằm trên 0; và ngày gần nhất cũng tốt hơn. Nhãn không bao giờ phụ thuộc mô hình.</p>`
+    + tableOf('<th>Ngày (UTC)</th><th class="num">Dòng</th><th class="num">Log-loss mô hình</th><th class="num">Log-loss tầng × mốc</th><th class="num">Mô hình tốt hơn</th>', days, "Chưa có dòng nào có xác suất của mô hình.")
+    + `<p>Cả 7 ngày, trên ${ev.rows || 0} dòng: mô hình tốt hơn ${gain} log-loss (số dương là tốt hơn).</p>`
+    + (cal ? tableOf('<th>Mô hình báo</th><th class="num">Dòng</th><th class="num">TB mô hình báo</th><th class="num">Bẫy thực tế</th><th class="num">TB tầng × mốc báo</th>', cal, "") : "")
+    + `<p class="muted">Đẩy rủi ro lên nhiều nhất: ${names(f.up)}. Kéo xuống nhiều nhất: ${names(f.down)}. Đây là trọng số trên đầu vào đã chuẩn hoá; các đầu vào tương quan với nhau, nên một trọng số không phải tác động riêng của đặc trưng đó.</p>`;
+}
+function candidatesSection(c) {
+  if (!c) return "";
+  const rows = (c.candidates || []).map(x => `<tr><td class="wrap">${esc(x.vi)} ${x.dir === ">=" ? "≥" : "≤"} ${num(x.thr)}${x.measured_by ? ` <span class="muted">(cùng phép đo với ${esc(x.measured_by)})</span>` : ""}</td>
+    <td class="num">${x.earlier.n} · ${pointsText(x.earlier.saved)}</td>
+    <td class="num">${x.later.n} (${x.later.mints} coin) · <b>${pointsText(x.later.saved)}</b> <span class="muted">(${pointsText(x.later.ci[0])} … ${pointsText(x.later.ci[1])})</span></td>
+    <td class="num">${pct(x.later.trap_on)} <span class="muted">(${pct(x.later.trap_exp)})</span></td><td class="num">${pct(x.overlap)}</td></tr>`).join("");
+  const when = c.at ? ` lúc ${clock(c.at)}` : "";
+  return `<h3>Ứng viên bộ lọc</h3>
+    <p class="muted">Quét tự động mỗi giờ${when} trên nhật ký 7 ngày (${c.rows || 0} dòng có đặc trưng). Mỗi đặc trưng thử 4 ngưỡng, tìm trên 60% dòng đầu và kiểm nguyên ngưỡng trên 40% sau. Ứng viên phải qua chuẩn vào của luật sống ở phần sau và kiểm đa so sánh Benjamini–Hochberg (q = 0,10). Chỉ tìm cảnh báo (vé kém hơn), không bao giờ tìm tín hiệu mua. Ứng viên chỉ để xem, không đổi nhãn. Nó chỉ thành bộ lọc khi chủ đồng ý: khi đó nó được đăng ký với mã mới, đóng băng, rồi vẫn phải qua luật sống trên dữ liệu mới.</p>`
+    + (c.note ? `<p class="muted">${esc(c.note)}</p>` : tableOf('<th>Luật</th><th class="num">60% đầu: dòng · kém hơn</th><th class="num">40% sau: dòng · kém hơn (KTC 95%)</th><th class="num">Bẫy 40% sau (cùng tầng)</th><th class="num">Đã có cờ khác bật</th>', rows, `Không ứng viên nào qua (${c.tested || 0} luật qua phần đầu).`));
+}
 const TIER = {active: "chính", shadow: "phụ", info: "ngữ cảnh"};
 const STATUS = {ok: '<span class="win">đang dùng (coin mới xác nhận)</span>', suspended: '<span class="on">tạm ngưng</span>', unproven: '<span class="muted">chưa dùng: chưa đủ dữ liệu</span>'};
 let reportDays = 7, reportAt = 0;
@@ -282,7 +330,7 @@ function renderReport(r) {
     Tỷ lệ bẫy: ${shareText(r.overall)}, thắng: ${t.winners}, vé 0,5 SOL lãi/lỗ trung bình ${signed(r.net_mean)}. Kho sáng lập (trong mẫu): ${shareText(r.pool)}.</p>`];
   if (!t.settled) {
     out.push('<p class="muted">Chưa có kết quả nào trong khoảng này: kết quả của một lần chấm có 30 phút sau lúc quyết định.</p>');
-    return out.join("");
+    return out.join("") + modelSection(r.model) + candidatesSection(r.candidates);
   }
   out.push("<h3>Theo phán quyết</h3>" + tableOf(
     '<th>Phán quyết</th><th class="num">Bẫy thực tế (KTC 95%)</th><th class="num">Rây đã báo</th><th class="num">Thắng</th><th class="num">Vé lãi/lỗ TB</th>',
@@ -301,6 +349,7 @@ function renderReport(r) {
       <td class="num">${shareText(f.traps)} <span class="muted">(${f.trap_exp == null ? "—" : pct(f.trap_exp)})</span></td>
       <td class="num">${f.traps.n ? `${f.winners} <span class="muted">(${pct(f.winners / f.traps.n)} · cùng tầng ${f.win_exp == null ? "—" : pct(f.win_exp)})</span>` : "—"}</td>
       <td class="num">${shareText(f.pool)}, ${f.pool.winners} thắng</td></tr>`).join(""), ""));
+  out.push(modelSection(r.model) + candidatesSection(r.candidates));
   out.push(`<details style="margin-top:14px"><summary>Bẫy lọt lưới (${r.missed.count}${r.missed.count > r.missed.rows.length ? `, hiện ${r.missed.rows.length} mới nhất` : ""})</summary>
     <p class="muted">Nhãn KHÔNG THẤY CỜ, ÍT HOẠT ĐỘNG, CẢNH GIÁC hoặc THIẾU DỮ LIỆU nhưng lỗ ≥ 50% sau 30 phút: đọc chúng trước khi vá bộ lọc.</p>`
     + tableOf(BRIEF_HEAD, briefRows(r.missed.rows), "Không có.") + "</details>");

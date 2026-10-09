@@ -48,7 +48,8 @@ def format_score(sc: dict[str, Any], link: str | None = None) -> str:
     if rk.get("pct") is not None:
         lo, hi = rk.get("ci") or (None, None)
         ci = f" (KTC {lo * 100:.0f}–{hi * 100:.0f}%)" if lo is not None else ""
-        lines.append(f"Tỷ lệ bẫy lịch sử: {rk['pct'] * 100:.0f}%{ci}, {rk.get('basis')}, n={rk.get('n')}")
+        what = "Xác suất bẫy (mô hình)" if rk.get("model") else "Tỷ lệ bẫy lịch sử"
+        lines.append(f"{what}: {rk['pct'] * 100:.0f}%{ci}, {rk.get('basis')}, n={rk.get('n')}")
     if sc.get("summary"):
         lines.append(sc["summary"])
     for f in (sc.get("active") or []) + (sc.get("shadow") or []):

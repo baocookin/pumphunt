@@ -245,7 +245,11 @@ def report(days: int = 7):
     now = time.time()
     lines = state.book.outcome_lines(now - days * 86_400, now) if state.book else []
     eng = state.engine
-    return build_report(lines, now, days, eng.outcomes.pending() if eng else 0, eng.rules if eng else None)
+    rep = build_report(lines, now, days, eng.outcomes.pending() if eng else 0, eng.rules if eng else None)
+    # the risk model's held-out record and the candidate scan (both on the last 7 days, hourly)
+    rep["model"] = eng.model_view() if eng else None
+    rep["candidates"] = eng.candidates if eng else None
+    return rep
 
 
 @api.get("/journal", dependencies=[Depends(require_owner)])
