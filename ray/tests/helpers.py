@@ -234,6 +234,9 @@ class TrustAll:
     def base(self, band: str, D: int) -> None:
         return None
 
+    def by_time(self, band: str) -> list[dict[str, Any]]:
+        return []
+
     def snapshot(self) -> dict[str, Any]:
         return {"rows": 0, "suspended": [], "ok": []}
 

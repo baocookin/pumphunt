@@ -31,6 +31,11 @@ def _count(rows: list[dict[str, Any]], label: str) -> int:
     return sum(1 for r in rows if r.get("label") == label)
 
 
+def _net(rows: list[dict[str, Any]]) -> float | None:
+    """The 0.5 SOL ticket's mean net over these rows."""
+    return sum(float(r.get("net") or 0.0) for r in rows) / len(rows) if rows else None
+
+
 def _brief(r: dict[str, Any]) -> dict[str, Any]:
     f = r.get("fired") or {}
     return {
@@ -75,6 +80,7 @@ def build(
                 "traps": share(_count(grp, "trap"), len(grp)),
                 "winners": _count(grp, "winner"),
                 "risk_mean": sum(risks) / len(risks) if risks else None,
+                "net_mean": _net(grp),
             }
         )
 
@@ -89,6 +95,7 @@ def build(
                     "D": D,
                     "traps": share(_count(grp, "trap"), len(grp)),
                     "winners": _count(grp, "winner"),
+                    "net_mean": _net(grp),
                     "pool": share(k0, n0),
                 }
             )
@@ -110,6 +117,11 @@ def build(
                 # what the same SOL band x decision time gave on the rows where it did not fire
                 "trap_exp": rec["trap_exp"],
                 "win_exp": rec["win_exp"],
+                # money: the ticket's mean net where it fired, against the same band x decision time
+                "net_on": rec["net_on"],
+                "net_exp": rec["net_exp"],
+                "saved": rec["saved"],
+                "saved_ci": rec["saved_ci"],
                 "status": (now_rec or rec)["status"],
                 "pool": {**share(ft, fn), "winners": fw},
             }
@@ -134,6 +146,7 @@ def build(
             "by_hand": len(rows) - len(decided),
         },
         "overall": share(traps, len(ok)),
+        "net_mean": _net(ok),
         "pool": share(POOL_K, POOL_N),
         "verdicts": verdicts,
         "bands": bands,

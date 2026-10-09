@@ -9,6 +9,7 @@ from app.live_rules import LiveRules, filter_record
 
 NOW = 1_800_000_000.0
 IDS = sieve.ACTIVE + sieve.SHADOW + sieve.INFO
+NETS = {"trap": -0.8, "winner": 1.5, "neutral": 0.0}  # the ticket's net by label, for these rows
 
 
 def _rows(fid, on, on_traps, on_wins, off, off_traps, off_wins, band="13-30", D=120, tag="x"):
@@ -29,6 +30,7 @@ def _rows(fid, on, on_traps, on_wins, off, off_traps, off_wins, band="13-30", D=
                 "band": band,
                 "status": "ok",
                 "label": label,
+                "net": NETS[label],
                 "fired": {"active": [fid] if fired else [], "shadow": [], "info": []},
                 "unscored": [],
             }
@@ -36,13 +38,15 @@ def _rows(fid, on, on_traps, on_wins, off, off_traps, off_wins, band="13-30", D=
     return out
 
 
-def test_a_filter_keeps_deciding_only_while_new_launches_bear_it_out():
-    works = _rows("SH-SG-1", 40, 32, 2, 60, 36, 9)
-    assert filter_record(works, "SH-SG-1")["status"] == "ok"
+def test_a_filter_keeps_deciding_only_while_its_rows_lose_more_than_the_band():
+    works = _rows("SH-SG-1", 40, 32, 2, 60, 36, 9)  # its rows: -0.565 on average, the band's -0.255
+    rec = filter_record(works, "SH-SG-1")
+    assert rec["status"] == "ok" and rec["saved"] == pytest.approx(0.31) and rec["saved_ci"][0] > 0
     reversed_ = _rows("N-MMAAS-SPLDIST", 40, 16, 12, 60, 36, 6)
     rec = filter_record(reversed_, "N-MMAAS-SPLDIST")
     assert rec["status"] == "suspended" and rec["trap_on"] == 0.4 and rec["trap_exp"] == pytest.approx(0.6)
-    more_winners = _rows("SH-DEV-1", 40, 32, 10, 60, 36, 6)  # traps fine, but it blocks winners
+    assert rec["net_on"] > rec["net_exp"]  # its rows did better: it blocks the winners
+    more_winners = _rows("SH-DEV-1", 40, 32, 10, 60, 36, 6)  # traps fine, but the winners pay for them
     assert filter_record(more_winners, "SH-DEV-1")["status"] == "suspended"
     assert filter_record(_rows("SH-DEV-1", 20, 18, 0, 60, 36, 6), "SH-DEV-1")["status"] == "unproven"
 
@@ -52,12 +56,13 @@ def test_the_risk_comes_from_new_launches_once_there_are_enough():
     rules.refresh(_rows("SH-DEV-1", 40, 16, 12, 60, 45, 6), NOW, IDS)
     assert not rules.allows("SH-DEV-1")  # suspended
     assert not rules.allows("SH-SG-1")  # never fired here: unproven, so silent
-    n, k, basis = rules.base("13-30", 120)
-    assert (n, k) == (100, 61) and "coin mới" in basis
+    n, k, basis, net = rules.base("13-30", 120)
+    assert (n, k) == (100, 61) and "coin mới" in basis and net == pytest.approx((-48.8 + 27) / 100)
+    assert [t["D"] for t in rules.by_time("13-30")] == [120]
     assert rules.base("13-30", 300)[0] == 100  # no 5-minute rows yet: the band
     assert rules.base("30-70", 120) is None  # nothing: the founding pool
     r = sieve.risk(20.0, 125, [], rules)
-    assert r["live"] and r["pct"] == pytest.approx(0.61)
+    assert r["live"] and r["pct"] == pytest.approx(0.61) and r["net_mean"] < 0 and r["by_time"][0]["n"] == 100
     assert not sieve.risk(40.0, 125, [], rules)["live"]
     assert rules.snapshot()["suspended"] == ["SH-DEV-1"]
 
@@ -100,17 +105,19 @@ def test_only_a_filter_new_launches_confirm_decides():
 
 
 def test_entering_needs_evidence_and_leaving_needs_it_gone():
-    weak = _rows("SH-SG-1", 40, 27, 2, 60, 35, 9)  # +9 points
+    weak = _rows("SH-SG-1", 40, 24, 2, 60, 36, 6)  # its rows 7.5 points worse than the band's
+    assert filter_record(weak, "SH-SG-1")["saved"] == pytest.approx(0.075)
     assert filter_record(weak, "SH-SG-1")["status"] == "suspended"
     assert filter_record(weak, "SH-SG-1", was_ok=True)["status"] == "ok"
-    thin = _rows("SH-SG-1", 30, 22, 1, 60, 36, 9)  # +13 points, but 30 rows: the interval reaches 60%
-    assert filter_record(thin, "SH-SG-1")["status"] == "suspended"
+    thin = _rows("SH-SG-1", 30, 22, 2, 60, 36, 6)  # 15.7 points, but the interval reaches below zero
+    rec = filter_record(thin, "SH-SG-1")
+    assert rec["saved"] >= 0.10 and rec["saved_ci"][0] <= 0 and rec["status"] == "suspended"
     rules = LiveRules()
     rules.refresh(_rows("SH-SG-1", 40, 32, 2, 60, 36, 9), NOW, IDS)
     assert rules.allows("SH-SG-1")
     rules.refresh(weak, NOW, IDS)
     assert rules.allows("SH-SG-1")  # still above the keeping bar
-    rules.refresh(_rows("SH-SG-1", 40, 25, 2, 60, 35, 9), NOW, IDS)  # +4 points
+    rules.refresh(_rows("SH-SG-1", 40, 20, 2, 60, 36, 6), NOW, IDS)  # as the band
     assert not rules.allows("SH-SG-1")
 
 

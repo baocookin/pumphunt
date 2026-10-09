@@ -181,6 +181,7 @@ function renderLive(live) {
 }
 
 function flagNames(ids) { return (ids || []).map(id => esc(labels[id] || id)).join("; "); }
+function pointsText(x) { return x == null ? "—" : (x >= 0 ? "+" : "−") + Math.abs(Math.round(x * 100)) + " điểm"; }
 function signed(x) { return x == null ? "—" : (x >= 0 ? "+" : "−") + Math.abs(Math.round(x * 100)) + "%"; }
 function outcomeText(o) {
   if (!o) return "";
@@ -221,7 +222,7 @@ function flagList(title, flags) {
     const why = f.live && f.live.status === "suspended" ? "tạm ngưng" : "chưa xác nhận";
     const cls = !f.scored ? "na" : f.fired && !quiet ? "on" : "off";
     const state = !f.scored ? "không chấm được" : f.fired ? (quiet ? `BẬT · ${why}` : "BẬT") : "tắt";
-    const lv = f.live && f.live.n ? ` · coin mới: ${pct(f.live.trap_on)} bẫy khi bật (cùng tầng không bật: ${pct(f.live.trap_exp)}), ${pct(f.live.win_on)} thắng (${pct(f.live.win_exp)}), n = ${f.live.n}` : "";
+    const lv = f.live && f.live.n && f.live.net_on != null ? ` · coin mới: vé lãi/lỗ TB ${signed(f.live.net_on)} khi bật (cùng tầng không bật ${signed(f.live.net_exp)}), ${pct(f.live.trap_on)} bẫy (${pct(f.live.trap_exp)}), n = ${f.live.n}` : "";
     const pool = f.pool ? ` · kho cũ: ${f.pool.traps}/${f.pool.flagged} dòng có cờ là bẫy, ${f.pool.winners} thắng` : "";
     return `<li><span class="${cls}">${state}</span><span>${esc(f.label)}</span><span class="muted">${esc(f.raw_text)}${esc(lv)}${esc(pool)}</span></li>`;
   }).join("") + "</ul>";
@@ -242,7 +243,8 @@ function scoreCard(sc) {
       <div class="kv"><b>${pct(rk.pct)}</b><span>tỷ lệ bẫy lịch sử${esc(ci)}</span></div>
       <div class="kv"><b>${sc.floor == null ? "—" : pct(sc.floor)}</b><span>sàn lỗ trên curve (vé 0,5 SOL)</span></div>
     </div>
-    <p class="muted">${esc(rk.basis || "")}${rk.n ? ", n = " + rk.n : ""}${rk.note ? ". " + esc(rk.note) : ""}</p>
+    <p class="muted">${esc(rk.basis || "")}${rk.n ? ", n = " + rk.n : ""}${rk.net_mean != null ? `; vé 0,5 SOL ở đây lãi/lỗ trung bình ${signed(rk.net_mean)}` : ""}${rk.note ? ". " + esc(rk.note) : ""}</p>
+    ${rk.by_time && rk.by_time.length ? `<p class="muted">Cùng tầng theo mốc (coin mới 7 ngày): ${rk.by_time.map(t => `${t.D / 60} phút ${pct(t.trap)} bẫy, vé ${signed(t.net)} (n = ${t.n})`).join(" · ")}.</p>` : ""}
     ${sc.outcome ? `<p>Sau 30 phút: ${outcomeText(sc.outcome)} <span class="muted">(vé 0,5 SOL mua lúc chấm${sc.outcome.why === "grad" ? ", bán lúc tốt nghiệp" : ""})</span></p>`
       : sc.entry ? `<p class="muted">Kết quả 30 phút có lúc ${clock(sc.entry.at + 1800)}.</p>` : ""}
     ${flagList("Bộ lọc chính (quyết định TRÁNH)", sc.active)}
@@ -277,24 +279,26 @@ const BRIEF_HEAD = '<th>Lúc chấm</th><th>Coin</th><th>Mint</th><th>Mốc</th>
 function renderReport(r) {
   const t = r.totals;
   const out = [`<p>${t.settled} lần chấm ở các mốc đã có kết quả${t.pending ? `, ${t.pending} đang chờ` : ""}${t.unresolved ? `, ${t.unresolved} không đọc được` : ""}${t.by_hand ? `; ${t.by_hand} lần chấm tay tính riêng` : ""}.
-    Tỷ lệ bẫy: ${shareText(r.overall)}, thắng: ${t.winners}. Kho sáng lập (trong mẫu): ${shareText(r.pool)}.</p>`];
+    Tỷ lệ bẫy: ${shareText(r.overall)}, thắng: ${t.winners}, vé 0,5 SOL lãi/lỗ trung bình ${signed(r.net_mean)}. Kho sáng lập (trong mẫu): ${shareText(r.pool)}.</p>`];
   if (!t.settled) {
     out.push('<p class="muted">Chưa có kết quả nào trong khoảng này: kết quả của một lần chấm có 30 phút sau lúc quyết định.</p>');
     return out.join("");
   }
   out.push("<h3>Theo phán quyết</h3>" + tableOf(
-    '<th>Phán quyết</th><th class="num">Bẫy thực tế (KTC 95%)</th><th class="num">Rây đã báo</th><th class="num">Thắng</th>',
+    '<th>Phán quyết</th><th class="num">Bẫy thực tế (KTC 95%)</th><th class="num">Rây đã báo</th><th class="num">Thắng</th><th class="num">Vé lãi/lỗ TB</th>',
     r.verdicts.map(v => `<tr><td>${vchip(v.verdict, v.verdict_vi)}</td><td class="num">${shareText(v.traps)}</td>
-      <td class="num">${v.risk_mean == null ? "—" : pct(v.risk_mean)}</td><td class="num">${v.winners}</td></tr>`).join(""), ""));
+      <td class="num">${v.risk_mean == null ? "—" : pct(v.risk_mean)}</td><td class="num">${v.winners}</td><td class="num">${signed(v.net_mean)}</td></tr>`).join(""), ""));
   out.push("<h3>Theo tầng SOL và mốc</h3>" + tableOf(
-    '<th>Tầng SOL</th><th>Mốc</th><th class="num">Bẫy trên coin mới</th><th class="num">Thắng</th><th class="num">Kho sáng lập</th>',
+    '<th>Tầng SOL</th><th>Mốc</th><th class="num">Bẫy trên coin mới</th><th class="num">Thắng</th><th class="num">Vé lãi/lỗ TB</th><th class="num">Kho sáng lập</th>',
     r.bands.map(b => `<tr><td>${esc(b.band)}</td><td>${b.D / 60} phút</td><td class="num">${shareText(b.traps)}</td>
-      <td class="num">${b.traps.n ? b.winners : "—"}</td><td class="num">${shareText(b.pool)}</td></tr>`).join(""), ""));
-  out.push(`<h3>Theo bộ lọc</h3><p class="muted">Luật sống: một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó. Trong 7 ngày qua nó phải bật ≥ 30 lần (≥ 10 coin), tỷ lệ bẫy khi bật cao hơn ≥ 10 điểm so với coin cùng tầng và cùng mốc mà nó không bật, và không nhiều coin thắng hơn. Chưa đủ dữ liệu hoặc không đạt thì vẫn hiện, vẫn được ghi, nhưng không quyết định nhãn.</p>` + tableOf(
-    '<th>Bộ lọc</th><th>Nhóm</th><th>Trạng thái</th><th class="num">Khi bật: bẫy trên coin mới</th><th class="num">Cùng tầng, không bật</th><th class="num">Thắng khi bật</th><th class="num">Kho sáng lập</th>',
+      <td class="num">${b.traps.n ? b.winners : "—"}</td><td class="num">${b.traps.n ? signed(b.net_mean) : "—"}</td><td class="num">${shareText(b.pool)}</td></tr>`).join(""), ""));
+  out.push(`<h3>Theo bộ lọc</h3><p class="muted">Luật sống, chấm bằng tiền: một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó. Trong 7 ngày qua nó phải bật ≥ 30 lần (≥ 10 coin), và ở những coin nó bật, vé 0,5 SOL phải lãi/lỗ trung bình kém hơn ≥ 10 điểm so với coin cùng tầng, cùng mốc mà nó không bật (khoảng tin cậy 95% tính theo coin nằm trên 0). Đã được dùng thì giữ khi còn kém hơn ≥ 5 điểm. Chưa đủ dữ liệu hoặc không đạt thì vẫn hiện, vẫn được ghi, nhưng không quyết định nhãn.</p>` + tableOf(
+    '<th>Bộ lọc</th><th>Nhóm</th><th>Trạng thái</th><th class="num">Vé lãi/lỗ TB khi bật</th><th class="num">Cùng tầng, không bật</th><th class="num">Kém hơn (KTC 95%)</th><th class="num">Bẫy khi bật (cùng tầng)</th><th class="num">Thắng khi bật</th><th class="num">Kho sáng lập</th>',
     r.filters.map(f => `<tr><td class="wrap" title="${esc(f.id)}">${esc(f.label)}</td><td class="muted">${esc(TIER[f.tier] || f.tier)}</td>
       <td>${f.tier === "info" ? '<span class="muted">chỉ ngữ cảnh</span>' : STATUS[f.status] || ""}</td>
-      <td class="num">${shareText(f.traps)}</td><td class="num">${f.trap_exp == null ? "—" : pct(f.trap_exp)}</td>
+      <td class="num">${f.net_on == null ? "—" : signed(f.net_on)}</td><td class="num">${f.net_exp == null ? "—" : signed(f.net_exp)}</td>
+      <td class="num">${f.saved == null ? "—" : `<b>${pointsText(f.saved)}</b>${f.saved_ci ? ` <span class="muted">(${pointsText(f.saved_ci[0])} … ${pointsText(f.saved_ci[1])})</span>` : ""}`}</td>
+      <td class="num">${shareText(f.traps)} <span class="muted">(${f.trap_exp == null ? "—" : pct(f.trap_exp)})</span></td>
       <td class="num">${f.traps.n ? `${f.winners} <span class="muted">(${pct(f.winners / f.traps.n)} · cùng tầng ${f.win_exp == null ? "—" : pct(f.win_exp)})</span>` : "—"}</td>
       <td class="num">${shareText(f.pool)}, ${f.pool.winners} thắng</td></tr>`).join(""), ""));
   out.push(`<details style="margin-top:14px"><summary>Bẫy lọt lưới (${r.missed.count}${r.missed.count > r.missed.rows.length ? `, hiện ${r.missed.rows.length} mới nhất` : ""})</summary>
