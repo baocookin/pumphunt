@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from helpers import Cfg, FakeRpc, Launch, pk
+from helpers import Cfg, FakeRpc, Launch, TrustAll, pk
 
 from app.chain import MINT_AUTHORITY
 from app.engine import Engine, OnDemandLimit, ScoreBook, day_of, read_jsonl
@@ -41,6 +41,7 @@ def _setup(tmp_path, dev_sol=5.0, crowd=30, at=30, **cfg):
     rpc.slot = la.s0 + 400
     clock = Clock(T0 + at)
     eng = Engine(Cfg(**cfg), rpc, ScoreBook(tmp_path), clock=clock)
+    eng.rules = TrustAll()  # the filters decide by their tiers here (tests/test_live_rules.py: the rule)
     return la, rpc, clock, eng
 
 

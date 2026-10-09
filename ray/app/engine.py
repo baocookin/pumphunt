@@ -35,9 +35,10 @@ from .chain import (
 )
 from .history import History
 from .live import Census, Token, Tracker
+from .live_rules import WINDOW_S, LiveRules
 from .outcome import Outcomes, journal_line
 from .rpc import BudgetExhausted, Rpc, describe_error
-from .sieve import FL, FROZEN_PROBLEMS, light_score, score_row
+from .sieve import ACTIVE, FL, FROZEN_PROBLEMS, INFO, SHADOW, light_score, score_row
 
 LIGHT = {"below_gate": "DUOI_CONG", "beyond": "NGOAI_VUNG", "graduated": "DA_TOT_NGHIEP"}
 OUTCOME_KEYS = ("status", "net", "label", "why", "how", "due", "read_at", "real_exit")
@@ -194,6 +195,7 @@ class Engine:
             "last_error": None,
             "scored": 0,
             "outcome_errors": 0,
+            "rules_errors": 0,
             "outcomes": {},  # decision outcomes: score, small, below_gate, ...
             "unsynced": 0,
             "alive": {},  # loop name -> wall time of its last round, failed or not
@@ -203,6 +205,8 @@ class Engine:
         self.outcomes = Outcomes(rpc, self._outcome, clock)
         for sc in book.recent:
             self.outcomes.track(sc)
+        # Which filters may decide, and the risk shown, from the journal (app/live_rules.py).
+        self.rules = LiveRules()
 
     # --- loops ------------------------------------------------------------------------------------
     async def run(self) -> None:
@@ -210,6 +214,7 @@ class Engine:
             asyncio.create_task(self._every(self.cfg.census_s, self.census_once, "census")),
             asyncio.create_task(self._every(self.cfg.poll_tick_s, self.poll_once, "poll")),
             asyncio.create_task(self._every(self.cfg.outcome_tick_s, self.outcomes.run_once, "outcome")),
+            asyncio.create_task(self._every(self.cfg.rules_refresh_s, self.refresh_rules, "rules")),
         ]
         tasks += [asyncio.create_task(self._worker()) for _ in range(max(1, self.cfg.workers))]
         try:
@@ -238,6 +243,13 @@ class Engine:
                 self.stats["last_error"] = describe_error(exc)
             self.stats["alive"][name] = time.time()
             await asyncio.sleep(max(0.2, period - (time.monotonic() - t)))
+
+    async def refresh_rules(self) -> int:
+        """The live rule from the last 7 days of the outcome journal; returns the rows it read."""
+        now = self.clock()
+        lines = await asyncio.to_thread(self.book.outcome_lines, now - WINDOW_S, now)
+        self.rules.refresh(lines, now, ACTIVE + SHADOW + INFO)
+        return self.rules.rows
 
     async def census_once(self) -> int:
         now = self.clock()
@@ -385,7 +397,7 @@ class Engine:
         if row["complete"] is not None:
             real = max((entry[0] - int(tok.info["v_sol0"])) / LAMPORTS, tok.peak_real)
             return light_score(tok.info, real, D, at - tok.t0, now, "DA_TOT_NGHIEP")
-        sc = score_row(row, dslot, entry, D=D, age_s=at - tok.t0, now=now, data=data)
+        sc = score_row(row, dslot, entry, D=D, age_s=at - tok.t0, now=now, data=data, rules=self.rules)
         # what the 30-minute outcome is measured from
         sc["entry"] = {
             "at": round(at, 3),
@@ -455,5 +467,6 @@ class Engine:
             "scores_today": self.book.count_today,
             "frozen_problems": FROZEN_PROBLEMS,
             "journal": {**self.outcomes.stats, "pending": self.outcomes.pending()},
+            "rules": self.rules.snapshot(),
             **{k: v for k, v in self.stats.items() if k != "started"},
         }

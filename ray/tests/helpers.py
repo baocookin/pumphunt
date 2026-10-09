@@ -220,6 +220,24 @@ class FakeRpc:
         return self.slot, [self.launches[p].account() if p in self.launches else None for p in pubkeys]
 
 
+class TrustAll:
+    """Live rules under which every filter decides by its tier (the engine tests' default)."""
+
+    rows = 0
+
+    def allows(self, fid: str) -> bool:
+        return True
+
+    def record(self, fid: str) -> None:
+        return None
+
+    def base(self, band: str, D: int) -> None:
+        return None
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"rows": 0, "suspended": [], "ok": []}
+
+
 class Cfg:
     """Settings for the engine tests (the defaults of app.config, made fast)."""
 
@@ -240,6 +258,7 @@ class Cfg:
     keep_scores = 100
     outcome_tick_s = 5.0
     archive_rows = True
+    rules_refresh_s = 600.0
 
     def __init__(self, **kw):
         for k, v in kw.items():

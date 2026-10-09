@@ -23,11 +23,11 @@ API = "https://api.telegram.org"
 HELP = (
     "Rây chấm rủi ro một coin pump.fun (curve classic, quote SOL) tại thời điểm hỏi.\n"
     "Gửi /score <mint> hoặc dán mint.\n\n"
-    "TRÁNH: có dấu hiệu bẫy (bộ lọc chính).\n"
-    "CẢNH GIÁC: chỉ có cờ phụ (bằng chứng yếu).\n"
-    "KHÔNG THẤY CỜ: không thấy dấu hiệu nào. KHÔNG phải tín hiệu mua: tỷ lệ bẫy nền vẫn áp dụng.\n"
+    "TRÁNH: bộ lọc chính bật, và coin mới đã xác nhận bộ lọc đó.\n"
+    "CẢNH GIÁC: chỉ cờ phụ đã xác nhận bật (bằng chứng yếu hơn).\n"
+    "KHÔNG THẤY CỜ: không có cờ đã xác nhận. KHÔNG phải tín hiệu mua: tỷ lệ bẫy của tầng vẫn áp dụng.\n"
     "DƯỚI CỔNG: dưới 11,66 SOL, vé 0,5 SOL không thể lỗ 50% trên curve.\n"
-    "Tỷ lệ bẫy là số trong mẫu của kho 26 giờ (06–07/10/2026), chưa kiểm forward."
+    "Tỷ lệ bẫy lấy từ coin mới 7 ngày qua (kết quả 30 phút sau mỗi lần chấm)."
 )
 
 

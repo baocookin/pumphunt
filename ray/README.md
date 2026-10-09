@@ -28,16 +28,16 @@ Một mốc D chỉ được quyết định trong 45 s sau D; curve phát hiệ
 
 | Nhãn | Nghĩa |
 |---|---|
-| **TRÁNH** | Bộ lọc chính bật: dev + creator còn giữ ≥ 3% cung (SH-DEV-1), hoặc sóng mua cùng cỡ ≥ 4 ví trong một slot (N-MMAAS-WAVE-STREAM). Trong kho sáng lập: 24/30 và 26/29 dòng bị cờ là bẫy. |
-| **THIẾU DỮ LIỆU** | Bộ lọc chính cần đủ mọi giao dịch nhưng chuỗi reserve bị hở, lịch sử bị cắt (quá `RAY_HISTORY_MAX_TX`) hoặc thiếu vị trí giao dịch. |
-| **CẢNH GIÁC** | Chỉ cờ phụ bật (bằng chứng yếu hơn): SH-SG-1, N-MMAAS-SPLDIST, N-MMAAS-WAVE, CLD-ORPHAN-v1. |
+| **TRÁNH** | Một bộ lọc chính bật **và đã được coin mới xác nhận** (xem *Luật sống* bên dưới). Các bộ lọc chính: dev + creator còn giữ ≥ 3% cung (SH-DEV-1), sóng mua cùng cỡ ≥ 4 ví trong một slot (N-MMAAS-WAVE-STREAM). |
+| **THIẾU DỮ LIỆU** | Một bộ lọc chính đã được xác nhận cần đủ mọi giao dịch, nhưng chuỗi reserve bị hở, lịch sử bị cắt (quá `RAY_HISTORY_MAX_TX`) hoặc thiếu vị trí giao dịch. |
+| **CẢNH GIÁC** | Chỉ cờ phụ đã được coin mới xác nhận bật (bằng chứng yếu hơn). Các cờ phụ: SH-SG-1, N-MMAAS-SPLDIST, N-MMAAS-WAVE, CLD-ORPHAN-v1. |
 | **ÍT HOẠT ĐỘNG** | Không thấy cờ, nhưng 2 phút qua dưới 5 giao dịch, dưới 3 ví mua, hoặc không có giao dịch trong 60 s (ngoài cổng F0). |
-| **KHÔNG THẤY CỜ** | Không thấy dấu hiệu nào. **Không phải tín hiệu mua**: tỷ lệ bẫy nền của tầng vẫn áp dụng (13–30 SOL lúc 2 phút: 33/47 = 70%). |
+| **KHÔNG THẤY CỜ** | Không bộ lọc nào đã xác nhận bật (cờ chưa xác nhận hay tạm ngưng vẫn được ghi trong phần tóm tắt). **Không phải tín hiệu mua**: tỷ lệ bẫy của tầng trên coin mới vẫn áp dụng (13–30 SOL lúc 2 phút: 79% ngày 09/10). |
 | **DƯỚI CỔNG** | Dưới 11,66 SOL thật: vé 0,5 SOL không thể lỗ 50% trên curve (phí và trượt giá vẫn ăn mòn). Bộ lọc không áp dụng. |
 | **NGOÀI VÙNG ĐO** | Từ 70 SOL trở lên: sát tốt nghiệp, ngoài vùng bộ lọc đã được đo. |
 | **ĐÃ TỐT NGHIỆP** | Curve đã hoàn tất. |
 
-**Tỷ lệ bẫy** đi kèm mỗi điểm: số dòng bẫy / số dòng của ô (tầng SOL × mốc D) trong kho sáng lập, hoặc của cả tầng khi ô dưới 15 dòng; khi một bộ lọc chính bật mà tỷ lệ của nó cao hơn thì dùng tỷ lệ đó. Kèm khoảng tin cậy Wilson 95%. "Bẫy" = vé 0,5 SOL vào lúc chấm, lỗ ≥ 50% sau 30 phút. Cờ ngữ cảnh (FADE, TOPDIST, WASH…) chỉ để đọc, không đổi nhãn.
+**Tỷ lệ bẫy** đi kèm mỗi điểm: số dòng bẫy / số dòng của ô (tầng SOL × mốc D) trong nhật ký 7 ngày của coin mới, hoặc của cả tầng khi ô dưới 30 dòng; chỉ khi chưa đủ cả hai mới dùng kho sáng lập (ghi rõ "trong mẫu"). Khi một bộ lọc chính đã xác nhận bật mà tỷ lệ của nó cao hơn thì dùng tỷ lệ đó. Kèm khoảng tin cậy Wilson 95%. "Bẫy" = vé 0,5 SOL vào lúc chấm, lỗ ≥ 50% sau 30 phút. Cờ ngữ cảnh (FADE, TOPDIST, WASH…) chỉ để đọc, không đổi nhãn.
 
 Điểm nào cũng ghi chất lượng dữ liệu: số giao dịch đã đọc, chuỗi reserve có liền không, lịch sử có khớp tài khoản curve lúc quyết định không, và phải chờ chỉ mục bao lâu. Một điểm "chưa khớp" được chấm tới giao dịch cuối đọc được, tức là sớm hơn lúc quyết định.
 
@@ -79,6 +79,29 @@ Số của kho sáng lập là số trong mẫu; số trong báo cáo là trên 
 3. Đo bộ lọc mới trên `rows-*.jsonl.gz` với nhãn trong `outcomes-*.jsonl` của các tuần trước, không cần đọc lại chain.
 4. Thêm nhãn tiếng Việt và số đo vào `app/sieve.py`, rồi deploy.
 
+## Luật sống của bộ lọc (từ 09/10/2026)
+
+Trên 226 kết quả đầu tiên (09/10, 15:05–17:05 UTC), các bộ lọc chính **không đúng trên coin mới**. Số "kỳ vọng" dưới đây là tỷ lệ của các coin cùng tầng SOL và cùng mốc mà bộ lọc không bật.
+
+| Bộ lọc | Số lần bật | Bẫy khi bật | Bẫy kỳ vọng | Ghi chú |
+|---|---|---|---|---|
+| SH-DEV-1 | 43 | 60% | 66% | |
+| N-MMAAS-WAVE-STREAM | 33 | 61% | 57% | thắng nhiều gấp đôi |
+| N-MMAAS-SPLDIST | 44 | 39% | 63% | đảo ngược hẳn, 30% thắng |
+
+Tỷ lệ 80–90% mà Rây hiện trước đó là số trong mẫu của kho sáng lập, nên Rây đã báo TRÁNH cho nhiều coin rồi vẫn tăng giá. Từ nay:
+
+- **Một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó.** Trong 7 ngày qua, nó phải đạt cả ba điều:
+  - bật ≥ 30 lần, trên ≥ 10 coin;
+  - tỷ lệ bẫy khi bật cao hơn ít nhất 10 điểm so với các coin cùng tầng SOL, cùng mốc mà nó không bật;
+  - tỷ lệ thắng khi bật không cao hơn của các coin đó.
+- **Bộ lọc chưa đủ dữ liệu hoặc không đạt** vẫn được tính, vẫn hiện (ghi "chưa xác nhận" hoặc "tạm ngưng") và vẫn được ghi vào nhật ký, nhưng không quyết định nhãn. Khi số liệu của nó đạt chuẩn, nó tự được dùng lại.
+- **Tầng của bộ lọc giữ nguyên:** bộ lọc chính cho TRÁNH, bộ lọc phụ cho CẢNH GIÁC, bộ lọc ngữ cảnh không bao giờ quyết định. Luật này không thăng hạng bộ lọc nào (thăng hạng theo PREREG-SIEVE-R1 mục 5).
+- **Tỷ lệ bẫy hiển thị** lấy từ nhật ký 7 ngày của coin mới, cùng tầng SOL và cùng mốc (cần ≥ 30 dòng; không đủ thì lấy cả tầng). Chưa đủ cả hai thì mới dùng kho sáng lập, và ghi rõ là số trong mẫu.
+- Luật được tính lại mỗi 10 phút (`RAY_RULES_REFRESH_S`). Trạng thái từng bộ lọc nằm ở mục *Nhật ký kết quả → Theo bộ lọc*; mã ở `app/live_rules.py`.
+
+Áp lên dữ liệu đó, chỉ SH-SG-1 được xác nhận: bật 30 lần, 77% bẫy so với kỳ vọng 59%, ít thắng hơn. Tức là tạm thời không còn nhãn TRÁNH, CẢNH GIÁC chỉ đến từ SH-SG-1, còn lại là KHÔNG THẤY CỜ kèm tỷ lệ bẫy thực tế của tầng (ví dụ 13–30 SOL lúc 2 phút: 46/58 = 79%). Coin "không thấy cờ" vẫn phần lớn là bẫy; bộ lọc chỉ giúp được ở rìa.
+
 ## Cấu hình (biến môi trường)
 
 Đủ dùng chỉ với `RAY_PASSWORD`; mọi thứ khác có mặc định. Biến danh sách viết dạng JSON, ví dụ `RAY_TELEGRAM_PUSH=["TRANH"]`.
@@ -98,6 +121,7 @@ Số của kho sáng lập là số trong mẫu; số trong báo cáo là trên 
 | `RAY_DATA_DIR` / `PH_DATA_DIR` | `/data` trong image | Nhật ký ghi vào `<data>/ray/` (xem mục trên). |
 | `RAY_OUTCOME_TICK_S` | 5 | Bao lâu kiểm tra các kết quả 30 phút đến hạn một lần. |
 | `RAY_ARCHIVE_ROWS` | true | Lưu giao dịch của các coin được chấm (`rows-*.jsonl.gz`). |
+| `RAY_RULES_REFRESH_S` | 600 | Bao lâu tính lại luật sống của bộ lọc từ nhật ký. |
 | `RAY_TELEGRAM_BOT_TOKEN`, `RAY_TELEGRAM_CHAT_ID` | | Bot Telegram riêng (xem dưới). |
 | `RAY_TELEGRAM_PUSH` | `[]` | Nhãn tự đẩy về Telegram, ví dụ `["TRANH","KHONG_THAY_CO"]`. |
 | `RAY_PUBLIC_URL` | | Link bảng điều khiển gắn vào tin Telegram. |
@@ -164,6 +188,7 @@ Docker: `docker build -f ray/Dockerfile -t ray .` từ gốc repo. Image chép `
 | `app/engine.py` | Vòng lặp, hàng chờ chấm, sổ điểm và các file nhật ký. |
 | `app/outcome.py` | Kết quả 30 phút: công thức vé của nghiên cứu, đọc đúng giờ hoặc từ lịch sử. |
 | `app/report.py` | Báo cáo nhật ký so với kho sáng lập. |
+| `app/live_rules.py` | Luật sống: bộ lọc nào được quyết định nhãn, tỷ lệ bẫy từ coin mới. |
 | `app/api.py`, `app/static/index.html` | API và bảng điều khiển. |
 | `app/telegram.py` | Bot Telegram riêng. |
 

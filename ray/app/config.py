@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     ondemand_per_hour: int = 60  # scores asked by mint (dashboard, Telegram)
     # Outcome journal: every full score's ticket valued 30 minutes after its entry (checked this often).
     outcome_tick_s: float = 5.0
+    # How often the live rule (which filters may decide, the risk shown) is recomputed from the journal.
+    rules_refresh_s: float = 600.0
     # Keep the trades of every launch scored at a decision time (rows-*.jsonl.gz, ~20 MB a day), so a
     # new filter can be run on past weeks without reading the chain again.
     archive_rows: bool = True

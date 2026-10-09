@@ -243,7 +243,8 @@ def report(days: int = 7):
     days = max(1, min(int(days), 90))
     now = time.time()
     lines = state.book.outcome_lines(now - days * 86_400, now) if state.book else []
-    return build_report(lines, now, days, state.engine.outcomes.pending() if state.engine else 0)
+    eng = state.engine
+    return build_report(lines, now, days, eng.outcomes.pending() if eng else 0, eng.rules if eng else None)
 
 
 @api.get("/journal", dependencies=[Depends(require_owner)])

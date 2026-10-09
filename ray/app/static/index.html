@@ -159,6 +159,7 @@ function renderStatus(st, build) {
   if (s.scores_today != null) chips.push(`<span class="chip">${s.scores_today} lần chấm hôm nay</span>`);
   if (s.queue) chips.push(`<span class="chip">hàng chờ ${s.queue}</span>`);
   if (s.journal) chips.push(`<span class="chip">${s.journal.pending} lần chấm chờ kết quả 30 phút</span>`);
+  if (s.rules && s.rules.suspended && s.rules.suspended.length) chips.push(`<span class="chip bad" title="${esc(s.rules.suspended.join(", "))}">${s.rules.suspended.length} bộ lọc tạm ngưng</span>`);
   if (s.ondemand_left != null) chips.push(`<span class="chip">còn ${s.ondemand_left} lượt chấm tay/giờ</span>`);
   if (s.frozen_problems && s.frozen_problems.length) chips.push(`<span class="chip bad">bộ lọc bị sửa tại chỗ: không tin được</span>`);
   if (s.last_error) chips.push(`<span class="chip bad" title="${esc(s.last_error)}">lỗi gần nhất</span>`);
@@ -216,10 +217,13 @@ function renderFilters() {
 function flagList(title, flags) {
   if (!flags || !flags.length) return "";
   return `<h3 style="font-size:13px;margin:12px 0 4px">${esc(title)}</h3><ul class="flags">` + flags.map(f => {
-    const cls = !f.scored ? "na" : f.fired ? "on" : "off";
-    const state = !f.scored ? "không chấm được" : f.fired ? "BẬT" : "tắt";
-    const pool = f.pool ? ` · kho: ${f.pool.traps}/${f.pool.flagged} dòng có cờ là bẫy, ${f.pool.winners} thắng` : "";
-    return `<li><span class="${cls}">${state}</span><span>${esc(f.label)}</span><span class="muted">${esc(f.raw_text)}${esc(pool)}</span></li>`;
+    const quiet = f.deciding === false && f.tier !== "info";
+    const why = f.live && f.live.status === "suspended" ? "tạm ngưng" : "chưa xác nhận";
+    const cls = !f.scored ? "na" : f.fired && !quiet ? "on" : "off";
+    const state = !f.scored ? "không chấm được" : f.fired ? (quiet ? `BẬT · ${why}` : "BẬT") : "tắt";
+    const lv = f.live && f.live.n ? ` · coin mới: ${pct(f.live.trap_on)} bẫy khi bật (cùng tầng không bật: ${pct(f.live.trap_exp)}), ${pct(f.live.win_on)} thắng (${pct(f.live.win_exp)}), n = ${f.live.n}` : "";
+    const pool = f.pool ? ` · kho cũ: ${f.pool.traps}/${f.pool.flagged} dòng có cờ là bẫy, ${f.pool.winners} thắng` : "";
+    return `<li><span class="${cls}">${state}</span><span>${esc(f.label)}</span><span class="muted">${esc(f.raw_text)}${esc(lv)}${esc(pool)}</span></li>`;
   }).join("") + "</ul>";
 }
 
@@ -253,6 +257,7 @@ function scoreCard(sc) {
 }
 
 const TIER = {active: "chính", shadow: "phụ", info: "ngữ cảnh"};
+const STATUS = {ok: '<span class="win">đang dùng (coin mới xác nhận)</span>', suspended: '<span class="on">tạm ngưng</span>', unproven: '<span class="muted">chưa dùng: chưa đủ dữ liệu</span>'};
 let reportDays = 7, reportAt = 0;
 function shareText(s) {
   if (!s || !s.n) return '<span class="muted">—</span>';
@@ -285,15 +290,18 @@ function renderReport(r) {
     '<th>Tầng SOL</th><th>Mốc</th><th class="num">Bẫy trên coin mới</th><th class="num">Thắng</th><th class="num">Kho sáng lập</th>',
     r.bands.map(b => `<tr><td>${esc(b.band)}</td><td>${b.D / 60} phút</td><td class="num">${shareText(b.traps)}</td>
       <td class="num">${b.traps.n ? b.winners : "—"}</td><td class="num">${shareText(b.pool)}</td></tr>`).join(""), ""));
-  out.push("<h3>Theo bộ lọc</h3>" + tableOf(
-    '<th>Bộ lọc</th><th>Nhóm</th><th class="num">Khi bật: bẫy trên coin mới</th><th class="num">Thắng</th><th class="num">Kho sáng lập</th>',
+  out.push(`<h3>Theo bộ lọc</h3><p class="muted">Luật sống: một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó. Trong 7 ngày qua nó phải bật ≥ 30 lần (≥ 10 coin), tỷ lệ bẫy khi bật cao hơn ≥ 10 điểm so với coin cùng tầng và cùng mốc mà nó không bật, và không nhiều coin thắng hơn. Chưa đủ dữ liệu hoặc không đạt thì vẫn hiện, vẫn được ghi, nhưng không quyết định nhãn.</p>` + tableOf(
+    '<th>Bộ lọc</th><th>Nhóm</th><th>Trạng thái</th><th class="num">Khi bật: bẫy trên coin mới</th><th class="num">Cùng tầng, không bật</th><th class="num">Thắng khi bật</th><th class="num">Kho sáng lập</th>',
     r.filters.map(f => `<tr><td class="wrap" title="${esc(f.id)}">${esc(f.label)}</td><td class="muted">${esc(TIER[f.tier] || f.tier)}</td>
-      <td class="num">${shareText(f.traps)}</td><td class="num">${f.traps.n ? f.winners : "—"}</td>
+      <td>${f.tier === "info" ? '<span class="muted">chỉ ngữ cảnh</span>' : STATUS[f.status] || ""}</td>
+      <td class="num">${shareText(f.traps)}</td><td class="num">${f.trap_exp == null ? "—" : pct(f.trap_exp)}</td>
+      <td class="num">${f.traps.n ? `${f.winners} <span class="muted">(${pct(f.winners / f.traps.n)} · cùng tầng ${f.win_exp == null ? "—" : pct(f.win_exp)})</span>` : "—"}</td>
       <td class="num">${shareText(f.pool)}, ${f.pool.winners} thắng</td></tr>`).join(""), ""));
-  out.push(`<h3>Bẫy lọt lưới (${r.missed.count})</h3><p class="muted">Nhãn KHÔNG THẤY CỜ, ÍT HOẠT ĐỘNG, CẢNH GIÁC hoặc THIẾU DỮ LIỆU nhưng lỗ ≥ 50% sau 30 phút: đọc chúng trước khi vá bộ lọc.</p>`
-    + tableOf(BRIEF_HEAD, briefRows(r.missed.rows), "Không có."));
-  out.push(`<h3>Báo động nhầm (${r.false_alarms.count})</h3><p class="muted">Nhãn TRÁNH nhưng lãi ≥ 100% sau 30 phút.</p>`
-    + tableOf(BRIEF_HEAD, briefRows(r.false_alarms.rows), "Không có."));
+  out.push(`<details style="margin-top:14px"><summary>Bẫy lọt lưới (${r.missed.count}${r.missed.count > r.missed.rows.length ? `, hiện ${r.missed.rows.length} mới nhất` : ""})</summary>
+    <p class="muted">Nhãn KHÔNG THẤY CỜ, ÍT HOẠT ĐỘNG, CẢNH GIÁC hoặc THIẾU DỮ LIỆU nhưng lỗ ≥ 50% sau 30 phút: đọc chúng trước khi vá bộ lọc.</p>`
+    + tableOf(BRIEF_HEAD, briefRows(r.missed.rows), "Không có.") + "</details>");
+  out.push(`<details style="margin-top:8px"><summary>Báo động nhầm (${r.false_alarms.count})</summary><p class="muted">Nhãn TRÁNH nhưng lãi ≥ 100% sau 30 phút.</p>`
+    + tableOf(BRIEF_HEAD, briefRows(r.false_alarms.rows), "Không có.") + "</details>");
   return out.join("");
 }
 async function loadReport(days) {
