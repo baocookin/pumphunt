@@ -1,5 +1,7 @@
 # pumphunt
 
+> **Từ 09/10/2026, app chạy trên Bunny là [Rây (`ray/`)](ray/README.md)**: bộ chấm rủi ro coin pump.fun theo thời gian thực dựa trên bộ lọc đã đóng băng của nghiên cứu. Chỉ cảnh báo, không bao giờ báo mua, không chạy thí nghiệm. Bộ ghi nghiên cứu mô tả dưới đây (`bot/`, `web/`) không còn được deploy; kết quả nghiên cứu: [`docs/TONG-KET-NGHIEN-CUU.md`](docs/TONG-KET-NGHIEN-CUU.md).
+
 **Không phải bot mua token.** Đây là bộ ghi dữ liệu on‑chain pump.fun có slot + harness nghiên cứu để trả lời một câu hỏi cụ thể, với tiêu chí giết được đăng ký trước:
 
 > **Giả thuyết C — "survivor entry":** mua token *đã graduate* tại T+30 phút sau migration (sau khi thanh khoản đã rơi ~57% và ổn định), giữ 1h, có dương EV sau chi phí không?
