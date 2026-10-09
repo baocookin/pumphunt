@@ -152,6 +152,9 @@ SUMMARY = {
 }
 
 
+LIVE_KEYS = ("status", "n", "trap_on", "trap_exp", "win_on", "win_exp")
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n <= 0:
         return 0.0, 1.0
@@ -191,25 +194,35 @@ def d_bucket(age_s: float) -> int:
     return 120 if age_s < 210 else 300 if age_s < 450 else 600
 
 
-def risk(real_d: float, age_s: float, fired_active: list[str]) -> dict[str, Any]:
-    """The historical trap share that applies: the band x decision-time cell (or the whole band when
-    the cell has fewer than 15 rows), or a fired active filter's share when higher."""
+def risk(real_d: float, age_s: float, fired_active: list[str], rules: Any = None) -> dict[str, Any]:
+    """The trap share that applies: the outcome journal's for the band x decision time when `rules`
+    has enough rows (app/live_rules.py), else the founding pool's (in-sample) cell, or the whole band
+    when the cell has fewer than 15 rows; a fired deciding filter's share when higher."""
     b = band(real_d)
     if b is None:
         return {"pct": None, "basis": "ngoài vùng đã đo", "n": 0}
     D = d_bucket(age_s)
-    n, k = BASE[b][D]
-    basis = f"tầng {b} SOL lúc {D // 60} phút"
-    if n < 15:
-        n, k = BASE[b]["all"]
-        basis = f"tầng {b} SOL (mọi thời điểm)"
-    best = {"pct": k / n, "k": k, "n": n, "basis": basis, "ci": wilson(k, n)}
+    live = rules.base(b, D) if rules is not None else None
+    if live is not None:
+        n, k, basis = live
+    else:
+        n, k = BASE[b][D]
+        basis = f"kho sáng lập (trong mẫu): tầng {b} SOL lúc {D // 60} phút"
+        if n < 15:
+            n, k = BASE[b]["all"]
+            basis = f"kho sáng lập (trong mẫu): tầng {b} SOL (mọi thời điểm)"
+    best = {"pct": k / n, "k": k, "n": n, "basis": basis, "ci": wilson(k, n), "live": live is not None}
     for fid in fired_active:
-        fn, ft, _ = FLAGGED.get(fid, (0, 0, 0))
+        rec = rules.record(fid) if rules is not None else None
+        if rec and rec["status"] != "unproven":
+            fn, ft, src, is_live = rec["n"], rec["traps"], f"coin mới 7 ngày qua: khi {fid} bật", True
+        else:
+            fn, ft, _ = FLAGGED.get(fid, (0, 0, 0))
+            src, is_live = f"kho sáng lập (trong mẫu): khi {fid} bật", False
         if fn and ft / fn > best["pct"]:
-            best = {"pct": ft / fn, "k": ft, "n": fn, "basis": f"khi {fid} bật", "ci": wilson(ft, fn)}
+            best = {"pct": ft / fn, "k": ft, "n": fn, "basis": src, "ci": wilson(ft, fn), "live": is_live}
     best["base"] = {"band": b, "D": D, "n": n, "k": k}
-    if b == "5-13":
+    if b == "5-13" and not best["live"]:
         best["note"] = "Tầng 5–13 SOL ít dữ liệu trên cổng: 2/78 dòng là bẫy, cả hai sát cổng."
     return best
 
@@ -331,8 +344,11 @@ def score_row(
     age_s: float,
     now: float,
     data: dict[str, Any],
+    rules: Any = None,
 ) -> dict[str, Any]:
-    """Score a census-format row at `dslot` with the curve at `entry` (v_sol, v_tokens) now."""
+    """Score a census-format row at `dslot` with the curve at `entry` (v_sol, v_tokens) now. With
+    `rules` (app/live_rules.py), a filter its journal record has suspended is shown but decides
+    nothing until new launches confirm it, and the risk comes from the journal."""
     info = row
     out = header(info, D, age_s, now)
     cand = FL.Cand(row, dslot, None, entry=(float(entry[0]), float(entry[1])))
@@ -348,6 +364,7 @@ def score_row(
     gaps = FL.check_ordered(row, dslot)["gaps"]
     chain_ok = gaps == 0 and not data.get("truncated") and not data.get("synthetic_tx_index")
     groups: dict[str, list[dict[str, Any]]] = {"active": [], "shadow": [], "info": []}
+    decides = rules.allows if rules is not None else (lambda fid: True)
     for group, members in (("active", ACTIVE), ("shadow", SHADOW), ("info", INFO)):
         for fid in members:
             fired, raw = ev[fid]
@@ -357,12 +374,17 @@ def score_row(
                 and (chain_ok or not d["complete"])
                 and not (raw is None and d["none_unscored"])
             )
-            groups[group].append(_flag(fid, fired, raw, scored))
+            flag = _flag(fid, fired, raw, scored)
+            flag["deciding"] = group != "info" and decides(fid)
+            rec = rules.record(fid) if rules is not None else None
+            flag["live"] = None if rec is None else {k: rec[k] for k in LIVE_KEYS}
+            groups[group].append(flag)
     f0 = f0_activity(cand)
     real_d, real_e = cand.real_d, cand.real_e
-    fired_active = [f["id"] for f in groups["active"] if f["fired"]]
-    unscored_active = [f["id"] for f in groups["active"] if not f["scored"]]
-    fired_shadow = [f["id"] for f in groups["shadow"] if f["fired"]]
+    fired_active = [f["id"] for f in groups["active"] if f["fired"] and f["deciding"]]
+    unscored_active = [f["id"] for f in groups["active"] if not f["scored"] and f["deciding"]]
+    fired_shadow = [f["id"] for f in groups["shadow"] if f["fired"] and f["deciding"]]
+    paused = [f["label"] for f in groups["active"] + groups["shadow"] if f["fired"] and not f["deciding"]]
     if real_e < GATE_E:
         verdict = "DUOI_CONG"
     elif real_d >= F0_MAX:
@@ -377,9 +399,11 @@ def score_row(
         verdict = "IT_HOAT_DONG"
     else:
         verdict = "KHONG_THAY_CO"
-    rk = risk(real_d, age_s, fired_active)
-    names = [f["label"] for f in groups["active"] + groups["shadow"] if f["fired"]]
+    rk = risk(real_d, age_s, fired_active, rules)
+    names = [f["label"] for f in groups["active"] + groups["shadow"] if f["fired"] and f["deciding"]]
     summary = SUMMARY[verdict].format(names="; ".join(names), unscored=", ".join(unscored_active))
+    if paused:
+        summary += f" Cờ chưa được coin mới xác nhận nên không quyết định nhãn: {'; '.join(paused)}."
     out.update(
         verdict=verdict,
         verdict_vi=VERDICTS[verdict],

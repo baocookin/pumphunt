@@ -8,6 +8,7 @@ asked by hand are counted apart. The founding pool's numbers are in-sample; thes
 
 from typing import Any
 
+from .live_rules import filter_record
 from .sieve import ACTIVE, BASE, FL, FLAGGED, INFO, LABELS, SHADOW, VERDICTS, wilson
 
 LET_THROUGH = ("KHONG_THAY_CO", "IT_HOAT_DONG", "CANH_GIAC", "THIEU_DU_LIEU")
@@ -48,7 +49,10 @@ def _brief(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build(lines: list[dict[str, Any]], now: float, days: int, pending: int) -> dict[str, Any]:
+def build(
+    lines: list[dict[str, Any]], now: float, days: int, pending: int, rules: Any = None
+) -> dict[str, Any]:
+    """`rules` (app/live_rules.LiveRules) gives each filter's current status under the live rule."""
     since = now - days * 86_400
     latest: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
     for r in lines:  # one outcome per score, the last written
@@ -90,9 +94,12 @@ def build(lines: list[dict[str, Any]], now: float, days: int, pending: int) -> d
             )
 
     filters = []
+    banded = [r for r in ok if r.get("band")]
     for fid in ACTIVE + SHADOW + INFO:
         grp = [r for r in ok if fid in _fired(r)]
         fn, ft, fw = FLAGGED.get(fid, (0, 0, 0))
+        rec = filter_record(banded, fid)
+        now_rec = rules.record(fid) if rules is not None else None
         filters.append(
             {
                 "id": fid,
@@ -100,6 +107,10 @@ def build(lines: list[dict[str, Any]], now: float, days: int, pending: int) -> d
                 "label": LABELS.get(fid, (fid, ""))[0],
                 "traps": share(_count(grp, "trap"), len(grp)),
                 "winners": _count(grp, "winner"),
+                # what the same SOL band x decision time gave on the rows where it did not fire
+                "trap_exp": rec["trap_exp"],
+                "win_exp": rec["win_exp"],
+                "status": (now_rec or rec)["status"],
                 "pool": {**share(ft, fn), "winners": fw},
             }
         )
