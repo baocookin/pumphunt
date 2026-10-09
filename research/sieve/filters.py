@@ -1135,6 +1135,24 @@ def v1_s1_early_hold(c):
     return f["early_hold"] >= 0.05, f["early_hold"]
 
 
+# Ray live round 1 (09/10/2026, docs/PREREG-RAY-L1.md): found on the outcome journal of the live
+# scorer, checked unchanged on its later rows; they decide in Ray only once their forward record
+# passes ray/app/live_rules.py.
+def ray_hot_v1(c):
+    lo = c.dslot - W120
+    n = 0
+    for t in reversed(c.vis):
+        if int(t[SLOT]) <= lo:
+            break
+        n += 1
+    return n >= 300, n
+
+
+def ray_wash_v1(c):
+    f = c.get("sh", _sh)
+    return c.real_d >= GATE_D and f["wash_share"] >= 0.30, f["wash_share"]
+
+
 def row_features(c):
     """Covariates the scorecard uses for strata and matched placebos (curve and activity level)."""
     v1 = c.get("v1", _v1)
@@ -1612,6 +1630,33 @@ REGISTRY = [
         "Log only (v1 chain member).",
         thr=0.30,
     ),
+    _f(
+        "RAY-HOT-v1",
+        ray_hot_v1,
+        "shadow",
+        "ray-live",
+        ">= 300 curve trades in the 120 s up to the decision slot.",
+        "Per-token trades up to the decision slot.",
+        "Decides in Ray only while its forward record passes ray/app/live_rules.py (PREREG-RAY-L1).",
+        "Ray journal 09/10/2026, threshold from the first 232 rows (15:05-16:46 UTC; 80th percentile 324, "
+        "rounded): +17 points of traps vs the rows' band x D, winners 16% vs 19%. Unchanged on the next "
+        "155 rows: +16 points (38 rows, 31 mints), winners 11% vs 16%.",
+        thr=300,
+    ),
+    _f(
+        "RAY-WASH-v1",
+        ray_wash_v1,
+        "shadow",
+        "ray-live",
+        "SH-WASH-1's measure as a shadow member: wallets with >= 3 side switches carry >= 30% of the "
+        "gross curve volume (and real_d >= 11.73).",
+        "Complete per-token trades from create.",
+        "Decides in Ray only while its forward record passes ray/app/live_rules.py (PREREG-RAY-L1).",
+        "SH-WASH-1 (INFO, threshold frozen 08/10) on the Ray journal 09/10/2026: first 233 rows +14 points "
+        "of traps vs band x D, winners 4% vs 22%; next 155 rows +11 points (17 rows), winners 6% vs 10%.",
+        complete=True,
+        thr=0.30,
+    ),
 ]
 BY_ID = {d["id"]: d for d in REGISTRY}
 V1_CHAIN = [
@@ -1732,6 +1777,9 @@ FROZEN = {
     "v1:S0_selfgrad_fill": "2affeacb4430bd59",
     "v1:S1_dev_hold": "39d7dcfde5bc954b",
     "v1:S1_wash": "6360b57c767fb5b0",
+    # Ray live round 1, frozen 2026-10-09 (docs/PREREG-RAY-L1.md)
+    "RAY-HOT-v1": "5e0698bae2b2c6fb",
+    "RAY-WASH-v1": "d3abfd51b48ed38f",
 }
 
 

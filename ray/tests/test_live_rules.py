@@ -97,3 +97,49 @@ def test_only_a_filter_new_launches_confirm_decides():
     rules.refresh(_rows("SH-SG-1", 40, 32, 2, 60, 36, 9), NOW, IDS)
     assert rules.allows("SH-SG-1")
     assert not rules.allows("SH-DEV-1") and not LiveRules().allows("SH-SG-1")  # no record: silent
+
+
+def test_entering_needs_evidence_and_leaving_needs_it_gone():
+    weak = _rows("SH-SG-1", 40, 27, 2, 60, 35, 9)  # +9 points
+    assert filter_record(weak, "SH-SG-1")["status"] == "suspended"
+    assert filter_record(weak, "SH-SG-1", was_ok=True)["status"] == "ok"
+    thin = _rows("SH-SG-1", 30, 22, 1, 60, 36, 9)  # +13 points, but 30 rows: the interval reaches 60%
+    assert filter_record(thin, "SH-SG-1")["status"] == "suspended"
+    rules = LiveRules()
+    rules.refresh(_rows("SH-SG-1", 40, 32, 2, 60, 36, 9), NOW, IDS)
+    assert rules.allows("SH-SG-1")
+    rules.refresh(weak, NOW, IDS)
+    assert rules.allows("SH-SG-1")  # still above the keeping bar
+    rules.refresh(_rows("SH-SG-1", 40, 25, 2, 60, 35, 9), NOW, IDS)  # +4 points
+    assert not rules.allows("SH-SG-1")
+
+
+def _score_launch(la):
+    row = row_of(la)
+    dslot = int(row["trades"][-1][0])
+    return sieve.score_row(row, dslot, (la.vs, la.vt), D=120, age_s=125, now=la.t0 + 125, data={})
+
+
+def test_a_hot_curve_and_a_washed_one_fire_the_new_filters():
+    assert {"RAY-HOT-v1", "RAY-WASH-v1"} <= set(sieve.SHADOW) and sieve.FROZEN_PROBLEMS == []
+    hot = Launch(600)
+    hot.buy(hot.dev, 2.0, hot.s0, hot.t0, in_create=True)
+    for i in range(320):  # 320 trades in the last 320 slots (~86 s)
+        hot.buy(pk(5_000 + i), 0.05, hot.s0 + 500 + i, hot.t0 + 135 + i // 4)
+    flag = next(f for f in _score_launch(hot)["shadow"] if f["id"] == "RAY-HOT-v1")
+    assert flag["fired"] and flag["raw"] == 320
+    wash = Launch(700)
+    wash.buy(wash.dev, 1.0, wash.s0, wash.t0, in_create=True)
+    for i in range(40):
+        wash.buy(pk(6_000 + i), 0.3, wash.s0 + 20 + i, wash.t0 + 6 + i // 4)
+    slot = wash.s0 + 100
+    for w in range(5):  # five wallets buying and selling back, again and again
+        for _ in range(2):
+            tok = wash.buy(pk(7_000 + w), 1.0, slot, wash.t0 + 30)
+            wash.sell(pk(7_000 + w), tok, slot + 1, wash.t0 + 30)
+            slot += 2
+        wash.buy(pk(7_000 + w), 1.0, slot, wash.t0 + 31)
+        slot += 1
+    sc = _score_launch(wash)
+    flag = next(f for f in sc["shadow"] if f["id"] == "RAY-WASH-v1")
+    assert wash.real >= 11.73 and flag["fired"] and flag["raw"] >= 0.30
