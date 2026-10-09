@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rây · chấm rủi ro</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5b6573; --line: #e3e6ea;
+  --red: #b42318; --red-bg: #fde8e7; --amber: #9a5b00; --amber-bg: #fff1d6;
+  --blue: #1f5aa8; --blue-bg: #e4eefb; --slate: #3b4552; --slate-bg: #e9edf2;
+  --violet: #5b3fa0; --violet-bg: #eee8fa; --gray: #6b7280; --gray-bg: #eef0f2;
+  --accent: #1f5aa8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #191d23; --text: #e6e9ee; --muted: #9aa4b2; --line: #2a3038;
+    --red: #ff8a80; --red-bg: #3a1513; --amber: #ffc46b; --amber-bg: #3a2a0c;
+    --blue: #8fb8ff; --blue-bg: #14243d; --slate: #c8d0db; --slate-bg: #262c34;
+    --violet: #c4b1ff; --violet-bg: #2a2140; --gray: #a0a8b3; --gray-bg: #23282f;
+    --accent: #8fb8ff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+h1 { margin: 0 0 4px; font-size: 18px; }
+.sub { color: var(--muted); font-size: 13px; }
+main { padding: 16px; max-width: 1280px; margin: 0 auto; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--gray-bg); color: var(--muted); white-space: nowrap; }
+.chip.bad { background: var(--red-bg); color: var(--red); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+input[type=text] { flex: 1 1 320px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+button { padding: 8px 14px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--panel); font: inherit; cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--bg); }
+.v { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 6px; }
+.v-TRANH { background: var(--red-bg); color: var(--red); }
+.v-CANH_GIAC { background: var(--amber-bg); color: var(--amber); }
+.v-THIEU_DU_LIEU { background: var(--violet-bg); color: var(--violet); }
+.v-KHONG_THAY_CO { background: var(--slate-bg); color: var(--slate); }
+.v-IT_HOAT_DONG, .v-NGOAI_VUNG, .v-DA_TOT_NGHIEP, .v-QUA_NHO, .v-LOI_DOC { background: var(--gray-bg); color: var(--gray); }
+.v-DUOI_CONG { background: var(--blue-bg); color: var(--blue); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.muted { color: var(--muted); }
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 10px; }
+.flags { margin: 8px 0 0; padding: 0; list-style: none; }
+.flags li { padding: 4px 0; border-top: 1px dashed var(--line); display: flex; gap: 8px; flex-wrap: wrap; }
+.flags li:first-child { border-top: 0; }
+.on { color: var(--red); font-weight: 600; }
+.off { color: var(--muted); }
+.na { color: var(--violet); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
+.kv { background: var(--bg); border-radius: 8px; padding: 6px 8px; }
+.kv b { display: block; font-size: 16px; }
+.kv span { font-size: 12px; color: var(--muted); }
+#drawer { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; }
+#drawer .panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(720px, 100%); background: var(--panel); overflow-y: auto; padding: 16px; border-left: 1px solid var(--line); }
+#drawer.open { display: block; }
+.filters label { font-size: 13px; color: var(--muted); margin-right: 10px; white-space: nowrap; }
+footer { color: var(--muted); font-size: 12px; padding: 0 16px 24px; max-width: 1280px; margin: 0 auto; }
+a { color: var(--accent); }
+.err { color: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rây · chấm rủi ro coin pump.fun theo thời gian thực</h1>
+  <div class="sub">Chỉ cảnh báo, không bao giờ là tín hiệu mua. Chỉ dùng riêng.</div>
+  <div class="chips" id="status"></div>
+</header>
+<main>
+  <section>
+    <h2>Chấm một coin ngay</h2>
+    <div class="row">
+      <input type="text" id="mint" placeholder="Dán mint (địa chỉ token) vào đây" autocomplete="off" spellcheck="false">
+      <button id="go">Chấm ngay</button>
+    </div>
+    <div id="ondemand"></div>
+  </section>
+  <section>
+    <h2>Đang theo dõi <span class="muted" id="live-count"></span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Coin</th><th>Mint</th><th class="num">Tuổi</th><th class="num">SOL thật</th><th class="num">Đỉnh</th><th>Lần chấm gần nhất</th><th class="num">Tỷ lệ bẫy</th></tr></thead>
+      <tbody id="live"></tbody>
+    </table></div>
+  </section>
+  <section>
+    <h2>Điểm gần đây</h2>
+    <div class="filters row" id="vfilters"></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Lúc</th><th>Coin</th><th>Mint</th><th>Mốc</th><th class="num">SOL thật</th><th>Phán quyết</th><th class="num">Tỷ lệ bẫy</th><th class="num">Sàn lỗ</th><th>Cờ</th></tr></thead>
+      <tbody id="recent"></tbody>
+    </table></div>
+  </section>
+</main>
+<footer id="foot"></footer>
+<div id="drawer"><div class="panel" id="detail"></div></div>
+<script>
+"use strict";
+const VERDICTS = ["TRANH", "CANH_GIAC", "THIEU_DU_LIEU", "KHONG_THAY_CO", "IT_HOAT_DONG", "DUOI_CONG", "NGOAI_VUNG", "DA_TOT_NGHIEP"];
+const VI = {TRANH: "TRÁNH", CANH_GIAC: "CẢNH GIÁC", THIEU_DU_LIEU: "THIẾU DỮ LIỆU", KHONG_THAY_CO: "KHÔNG THẤY CỜ",
+  IT_HOAT_DONG: "ÍT HOẠT ĐỘNG", DUOI_CONG: "DƯỚI CỔNG", NGOAI_VUNG: "NGOÀI VÙNG ĐO", DA_TOT_NGHIEP: "ĐÃ TỐT NGHIỆP"};
+const shown = new Set(VERDICTS.filter(v => v !== "DUOI_CONG"));
+let labels = {};
+let timer = null, failures = 0;
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+function short(m) { return m ? m.slice(0, 4) + "…" + m.slice(-4) : ""; }
+function age(s) { if (s == null) return "—"; s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+function sol(x, d = 2) { return x == null ? "—" : Number(x).toFixed(d); }
+function pct(x) { return x == null ? "—" : Math.round(x * 100) + "%"; }
+function clock(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString("vi-VN", {hour12: false}) : "—"; }
+function vchip(v, text) { return `<span class="v v-${esc(v)}">${esc(text || VI[v] || v)}</span>`; }
+function coin(r) { return `<b>${esc(r.symbol || "?")}</b> <span class="muted">${esc((r.name || "").slice(0, 24))}</span>`; }
+
+async function getJSON(url, opts) {
+  const r = await fetch(url, Object.assign({credentials: "same-origin"}, opts || {}));
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+  return body;
+}
+
+function renderStatus(st, build) {
+  const s = st.status || {};
+  const c = s.credits || {};
+  const chips = [];
+  if (s.error) chips.push(`<span class="chip bad">${esc(s.error)}</span>`);
+  if (s.census_age_s != null) chips.push(`<span class="chip ${s.census_age_s > 180 ? "bad" : ""}">census ${Math.round(s.census_age_s)} giây trước</span>`);
+  if (s.poll_age_s != null) chips.push(`<span class="chip ${s.poll_age_s > 60 ? "bad" : ""}">đọc curve ${Math.round(s.poll_age_s)} giây trước</span>`);
+  if (s.tracker) chips.push(`<span class="chip">${s.tracker.live} curve sống · ${s.tracker.hot} nóng</span>`);
+  if (c.cap) chips.push(`<span class="chip ${c.spent >= c.cap ? "bad" : ""}">credit hôm nay ${Number(c.spent).toLocaleString("vi-VN")} / ${Number(c.cap).toLocaleString("vi-VN")}</span>`);
+  if (s.scores_today != null) chips.push(`<span class="chip">${s.scores_today} lần chấm hôm nay</span>`);
+  if (s.queue) chips.push(`<span class="chip">hàng chờ ${s.queue}</span>`);
+  if (s.ondemand_left != null) chips.push(`<span class="chip">còn ${s.ondemand_left} lượt chấm tay/giờ</span>`);
+  if (s.frozen_problems && s.frozen_problems.length) chips.push(`<span class="chip bad">bộ lọc bị sửa tại chỗ: không tin được</span>`);
+  if (s.last_error) chips.push(`<span class="chip bad" title="${esc(s.last_error)}">lỗi gần nhất</span>`);
+  if (st.rpc) chips.push(`<span class="chip">RPC ${st.rpc === "public" ? "công khai (chậm hơn)" : esc(st.rpc)}</span>`);
+  chips.push(`<span class="chip">build ${esc((build || "").slice(0, 7))}</span>`);
+  document.getElementById("status").innerHTML = chips.join("");
+}
+
+function renderLive(live) {
+  document.getElementById("live-count").textContent = live.length ? `(${live.length} curve ≥ 2 SOL)` : "";
+  document.getElementById("live").innerHTML = live.map(t => {
+    const l = t.last;
+    return `<tr class="click" data-mint="${esc(t.mint)}">
+      <td>${coin(t)}</td><td class="mono">${esc(short(t.mint))}</td>
+      <td class="num">${age(t.age_s)}</td><td class="num">${sol(t.real)}</td><td class="num">${sol(t.peak_real)}</td>
+      <td>${l ? vchip(l.verdict, l.verdict_vi) + ` <span class="muted">${esc(l.key)}</span>` : '<span class="muted">chưa tới mốc</span>'}</td>
+      <td class="num">${l && l.risk ? pct(l.risk.pct) : "—"}</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="muted">Chưa có curve nào từ 2 SOL.</td></tr>`;
+}
+
+function flagNames(ids) { return ids.map(id => esc(labels[id] || id)).join("; "); }
+
+function renderRecent(recent) {
+  const rows = recent.filter(r => shown.has(r.verdict));
+  document.getElementById("recent").innerHTML = rows.slice(0, 300).map(r => `<tr class="click" data-mint="${esc(r.mint)}">
+      <td class="muted">${clock(r.at)}</td><td>${coin(r)}</td><td class="mono">${esc(short(r.mint))}</td>
+      <td>${esc(r.D ? (r.D / 60) + " phút" : "tay")}</td><td class="num">${sol(r.real)}</td>
+      <td>${vchip(r.verdict, r.verdict_vi)}</td><td class="num">${r.risk ? pct(r.risk.pct) : "—"}</td>
+      <td class="num">${r.floor == null ? "—" : pct(r.floor)}</td>
+      <td>${flagNames(r.fired)}${r.info && r.info.length ? ` <span class="muted">· ${flagNames(r.info)}</span>` : ""}</td></tr>`).join("")
+    || `<tr><td colspan="9" class="muted">Chưa có lần chấm nào khớp bộ lọc.</td></tr>`;
+}
+
+function renderFilters() {
+  document.getElementById("vfilters").innerHTML = VERDICTS.map(v =>
+    `<label><input type="checkbox" data-v="${v}" ${shown.has(v) ? "checked" : ""}> ${VI[v]}</label>`).join("");
+  document.querySelectorAll("#vfilters input").forEach(cb => cb.addEventListener("change", e => {
+    const v = e.target.dataset.v; if (e.target.checked) shown.add(v); else shown.delete(v); refresh();
+  }));
+}
+
+function flagList(title, flags) {
+  if (!flags || !flags.length) return "";
+  return `<h3 style="font-size:13px;margin:12px 0 4px">${esc(title)}</h3><ul class="flags">` + flags.map(f => {
+    const cls = !f.scored ? "na" : f.fired ? "on" : "off";
+    const state = !f.scored ? "không chấm được" : f.fired ? "BẬT" : "tắt";
+    const pool = f.pool ? ` · kho: ${f.pool.traps}/${f.pool.flagged} dòng có cờ là bẫy, ${f.pool.winners} thắng` : "";
+    return `<li><span class="${cls}">${state}</span><span>${esc(f.label)}</span><span class="muted">${esc(f.raw_text)}${esc(pool)}</span></li>`;
+  }).join("") + "</ul>";
+}
+
+function scoreCard(sc) {
+  const rk = sc.risk || {};
+  const ci = rk.ci ? ` (KTC ${pct(rk.ci[0])}–${pct(rk.ci[1])})` : "";
+  const d = sc.data || {};
+  const f0 = sc.f0;
+  return `<div class="card">
+    <div class="row">${vchip(sc.verdict, sc.verdict_vi)} <b>${esc(sc.symbol || "?")}</b> <span class="muted">${esc(sc.name || "")}</span>
+      <span class="muted">· ${esc(sc.D ? "mốc " + sc.D / 60 + " phút" : "chấm tay")} · ${clock(sc.at)}</span></div>
+    <p>${esc(sc.summary || "")}</p>
+    <div class="grid">
+      <div class="kv"><b>${age(sc.age_s)}</b><span>tuổi</span></div>
+      <div class="kv"><b>${sol(sc.real)}</b><span>SOL thật lúc chấm</span></div>
+      <div class="kv"><b>${pct(rk.pct)}</b><span>tỷ lệ bẫy lịch sử${esc(ci)}</span></div>
+      <div class="kv"><b>${sc.floor == null ? "—" : pct(sc.floor)}</b><span>sàn lỗ trên curve (vé 0,5 SOL)</span></div>
+    </div>
+    <p class="muted">${esc(rk.basis || "")}${rk.n ? ", n = " + rk.n : ""}${rk.note ? ". " + esc(rk.note) : ""}</p>
+    ${flagList("Bộ lọc chính (quyết định TRÁNH)", sc.active)}
+    ${flagList("Cờ phụ (bằng chứng yếu)", sc.shadow)}
+    ${flagList("Ngữ cảnh", sc.info)}
+    ${f0 ? `<p class="muted">Hoạt động 2 phút qua: ${f0.n120} giao dịch, ${f0.buyers120} ví mua${f0.ok ? "" : " (dưới ngưỡng cổng F0)"}.</p>` : ""}
+    ${sc.data ? `<p class="muted">Dữ liệu: ${d.trades ?? "—"} giao dịch tới slot ${esc(sc.slot)}, ${d.chain_ok ? "chuỗi reserve liền" : "chuỗi reserve hở hoặc bị cắt"}, ${d.synced ? `khớp tài khoản curve lúc quyết định (chờ chỉ mục ${d.wait_s ?? "—"} giây)` : `chưa khớp tài khoản curve: giao dịch cuối đọc được cách lúc quyết định ${d.lag_s ?? "—"} giây, có thể thiếu giao dịch`}.</p>` : ""}
+    <p><a href="https://pump.fun/coin/${encodeURIComponent(sc.mint)}" target="_blank" rel="noopener">pump.fun</a> ·
+       <a href="https://solscan.io/token/${encodeURIComponent(sc.mint)}" target="_blank" rel="noopener">Solscan</a> ·
+       <span class="mono">${esc(sc.mint)}</span></p>
+  </div>`;
+}
+
+async function openDetail(mint) {
+  const el = document.getElementById("detail");
+  el.innerHTML = `<button class="ghost" id="close">Đóng</button><p class="muted">Đang tải…</p>`;
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("close").onclick = closeDetail;
+  try {
+    const t = await getJSON("/api/token/" + encodeURIComponent(mint));
+    const scores = (t.scores || []).slice().reverse();
+    el.innerHTML = `<button class="ghost" id="close">Đóng</button>
+      <h2 style="margin-top:12px">${esc(t.view ? (t.view.symbol || "?") : (scores[0] ? scores[0].symbol : "?"))} <span class="mono muted">${esc(mint)}</span></h2>
+      <div class="row"><button id="again">Chấm lại ngay</button></div>
+      ${scores.map(scoreCard).join("") || '<p class="muted">Chưa có lần chấm nào.</p>'}`;
+    document.getElementById("close").onclick = closeDetail;
+    document.getElementById("again").onclick = () => scoreNow(mint, true);
+  } catch (e) {
+    el.innerHTML = `<button class="ghost" id="close">Đóng</button><p class="err">${esc(e.message)}</p>
+      <div class="row"><button id="again">Chấm ngay</button></div>`;
+    document.getElementById("close").onclick = closeDetail;
+    document.getElementById("again").onclick = () => scoreNow(mint, true);
+  }
+}
+function closeDetail() { document.getElementById("drawer").classList.remove("open"); if (location.hash) history.replaceState(null, "", " "); }
+
+async function scoreNow(mint, inDrawer) {
+  mint = (mint || "").trim();
+  const out = document.getElementById("ondemand");
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) { out.innerHTML = `<p class="err">Mint không hợp lệ.</p>`; return; }
+  const btn = document.getElementById("go"); btn.disabled = true;
+  out.innerHTML = `<p class="muted">Đang đọc giao dịch của curve…</p>`;
+  try {
+    const sc = await getJSON("/api/score/" + encodeURIComponent(mint), {method: "POST"});
+    out.innerHTML = scoreCard(sc);
+    if (inDrawer) openDetail(mint);
+  } catch (e) {
+    out.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  } finally { btn.disabled = false; }
+}
+
+let lastState = null;
+async function refresh() {
+  try {
+    const st = lastState = await getJSON("/api/state");
+    renderStatus(st, st.build_sha); renderLive(st.live || []); renderRecent(st.recent || []);
+    document.getElementById("foot").textContent = (st.pool_text || "") + " Theo NĐ 284/2026: không chia sẻ, không bán tín hiệu.";
+    failures = 0;
+  } catch (e) {
+    failures++;
+    document.getElementById("status").innerHTML = `<span class="chip bad">${esc(e.message)}</span>`;
+  }
+}
+function schedule() {
+  clearTimeout(timer);
+  if (document.hidden) return;
+  timer = setTimeout(async () => { await refresh(); schedule(); }, Math.min(30000, 3000 * (1 + failures)));
+}
+
+document.addEventListener("click", e => {
+  const tr = e.target.closest("tr.click");
+  if (tr && tr.dataset.mint) {
+    if (location.hash === "#" + tr.dataset.mint) openDetail(tr.dataset.mint); else location.hash = tr.dataset.mint;
+  }
+  if (e.target.id === "drawer") closeDetail();
+});
+window.addEventListener("hashchange", () => { const m = location.hash.slice(1); if (m) openDetail(m); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
+document.getElementById("go").onclick = () => scoreNow(document.getElementById("mint").value);
+document.getElementById("mint").addEventListener("keydown", e => { if (e.key === "Enter") scoreNow(e.target.value); });
+
+(async () => {
+  renderFilters();
+  try { const reg = await getJSON("/api/registry"); (reg.filters || []).forEach(f => labels[f.id] = f.label); } catch (e) { /* labels fall back to ids */ }
+  await refresh(); schedule();
+  if (location.hash.length > 1) openDetail(location.hash.slice(1));
+})();
+</script>
+</body>
+</html>

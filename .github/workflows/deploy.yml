@@ -1,5 +1,6 @@
-# Build the single image, push to GHCR, then point the Magic Containers app at the new tag.
-# Mirrors jamie-at-bunny/mc-template-fastapi-with-redis. Repository settings needed:
+# Build the scorer's image (ray/Dockerfile), push to GHCR, then point the Magic Containers app at the
+# new tag. The research recorder's image (root Dockerfile) is no longer deployed; its last build is
+# ghcr.io/baocookin/pumphunt:f20df965c218dca3c672191abe123bdd5fc9fad5. Repository settings needed:
 #   Variable APP_ID            — Magic Containers app id
 #   Secret   BUNNYNET_API_KEY  — bunny.net API key
 # and the GHCR package must be public (or registry credentials configured in Bunny).
@@ -29,6 +30,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ray/Dockerfile
           push: true
           build-args: |
             BUILD_SHA=${{ github.sha }}

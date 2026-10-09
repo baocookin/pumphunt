@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `pytest` (unlike `python -m pytest`) does not put the cwd on sys.path; the `app` package lives here.
+pythonpath = ["."]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection is declared in argument defaults by design
+extend-immutable-calls = ["fastapi.Depends"]
