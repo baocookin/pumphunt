@@ -70,6 +70,8 @@ def journal_line(sc: dict[str, Any], o: dict[str, Any]) -> dict[str, Any]:
         "chain_ok": data.get("chain_ok"),
         "synced": data.get("synced"),
         "entry": sc["entry"],
+        # the decision-time features (app/features.py): the candidate scan and the risk model read them
+        "features": sc.get("features"),
         **o,
     }
 

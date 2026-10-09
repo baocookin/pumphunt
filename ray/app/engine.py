@@ -33,12 +33,19 @@ from .chain import (
     parse_curve_account,
     signature_of,
 )
+from .features import curve_features
 from .history import History
 from .live import Census, Token, Tracker
 from .live_rules import WINDOW_S, LiveRules
+from .native import IDS as NATIVE_IDS
+from .native import evaluate as native_flags
 from .outcome import Outcomes, journal_line
 from .rpc import BudgetExhausted, Rpc, describe_error
 from .sieve import ACTIVE, FL, FROZEN_PROBLEMS, INFO, SHADOW, light_score, score_row
+from .wallets import WalletBook
+
+WALLETS_FILE = "wallets.json.gz"
+RULES_FILE = "rules.json"  # which filters decided at the last refresh, kept across restarts
 
 LIGHT = {"below_gate": "DUOI_CONG", "beyond": "NGOAI_VUNG", "graduated": "DA_TOT_NGHIEP"}
 OUTCOME_KEYS = ("status", "net", "label", "why", "how", "due", "read_at", "real_exit")
@@ -196,6 +203,7 @@ class Engine:
             "scored": 0,
             "outcome_errors": 0,
             "rules_errors": 0,
+            "wallets_errors": 0,
             "outcomes": {},  # decision outcomes: score, small, below_gate, ...
             "unsynced": 0,
             "alive": {},  # loop name -> wall time of its last round, failed or not
@@ -207,14 +215,21 @@ class Engine:
             self.outcomes.track(sc)
         # Which filters may decide, and the risk shown, from the journal (app/live_rules.py).
         self.rules = LiveRules()
+        # What wallets did early in earlier launches (app/wallets.py); loaded or rebuilt by run().
+        self.wallets = WalletBook()
 
     # --- loops ------------------------------------------------------------------------------------
     async def run(self) -> None:
+        with contextlib.suppress(Exception):
+            await self.load_wallets()
+        with contextlib.suppress(OSError, ValueError, AttributeError):
+            self.rules.restore(json.loads((self.book.dir / RULES_FILE).read_text()).get("ok") or [])
         tasks = [
             asyncio.create_task(self._every(self.cfg.census_s, self.census_once, "census")),
             asyncio.create_task(self._every(self.cfg.poll_tick_s, self.poll_once, "poll")),
             asyncio.create_task(self._every(self.cfg.outcome_tick_s, self.outcomes.run_once, "outcome")),
             asyncio.create_task(self._every(self.cfg.rules_refresh_s, self.refresh_rules, "rules")),
+            asyncio.create_task(self._every(self.cfg.wallets_save_s, self.save_wallets, "wallets")),
         ]
         tasks += [asyncio.create_task(self._worker()) for _ in range(max(1, self.cfg.workers))]
         try:
@@ -225,6 +240,8 @@ class Engine:
             for t in tasks:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
+            with contextlib.suppress(Exception):  # a deploy stops the app: keep what it learned since
+                self.wallets.save(self.book.dir / WALLETS_FILE)
 
     async def _every(self, period: float, fn: Callable[[], Awaitable[Any]], name: str) -> None:
         """Run `fn` every `period` seconds. A failed round is counted and the loop goes on; the health
@@ -248,8 +265,64 @@ class Engine:
         """The live rule from the last 7 days of the outcome journal; returns the rows it read."""
         now = self.clock()
         lines = await asyncio.to_thread(self.book.outcome_lines, now - WINDOW_S, now)
-        self.rules.refresh(lines, now, ACTIVE + SHADOW + INFO)
+        self.rules.refresh(lines, now, ACTIVE + SHADOW + INFO + NATIVE_IDS)
+        snap = json.dumps(self.rules.snapshot())
+        with contextlib.suppress(OSError):
+            await asyncio.to_thread(self._write, self.book.dir / RULES_FILE, snap)
         return self.rules.rows
+
+    @staticmethod
+    def _write(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(text)
+        tmp.replace(path)
+
+    # --- wallet memory ----------------------------------------------------------------------------
+    async def load_wallets(self) -> int:
+        """The saved wallet memory, or one rebuilt from the last two days of the row archive and the
+        outcome journal (the first start, or a lost file)."""
+        path = self.book.dir / WALLETS_FILE
+        now = self.clock()
+        book = await asyncio.to_thread(WalletBook.load, path)
+        if book is None:
+            book = await asyncio.to_thread(self._rebuild_wallets, now)
+        else:
+            # outcomes settled after the file was saved (a crash loses at most its last 15 minutes)
+            lines = await asyncio.to_thread(self.book.outcome_lines, now - 2 * 86_400, now)
+            for o in sorted(lines, key=lambda o: float(o.get("entry_at") or 0)):
+                if o.get("D") and o.get("status") == "ok":
+                    book.note_outcome(o["mint"], o.get("label"))
+        # launches scored while it loaded are noted again, in order
+        for mint, rec in self.wallets.launches.items():
+            if mint not in book.launches:
+                book._note(mint, {u: 0.0 for u in rec["early"]}, set(rec["dumpers"]), rec["dev"], rec["at"])
+        self.wallets = book
+        return len(book)
+
+    def _rebuild_wallets(self, now: float) -> WalletBook:
+        def rows() -> Any:
+            for ts in (now - 86_400, now):
+                path = self.book.dir / f"rows-{day_of(ts)}.jsonl.gz"
+                if not path.is_file():
+                    continue
+                with gzip.open(path, "rt") as fh:
+                    for line in fh:
+                        with contextlib.suppress(ValueError):
+                            yield json.loads(line)
+
+        return WalletBook.rebuild(rows(), self.book.outcome_lines(now - 2 * 86_400, now))
+
+    async def save_wallets(self) -> int:
+        """Prune and save the wallet memory (a snapshot taken here, written in a thread)."""
+        now = self.clock()
+        self.wallets.prune(now)
+        snap = WalletBook()
+        snap.wallets = {u: list(w) for u, w in self.wallets.wallets.items()}
+        snap.devs = {d: list(v) for d, v in self.wallets.devs.items()}
+        snap.launches = {m: dict(v) for m, v in self.wallets.launches.items()}
+        await asyncio.to_thread(snap.save, self.book.dir / WALLETS_FILE)
+        return len(snap)
 
     async def census_once(self) -> int:
         now = self.clock()
@@ -342,6 +415,8 @@ class Engine:
 
     def _outcome(self, sc: dict[str, Any], o: dict[str, Any]) -> None:
         sc["outcome"] = {k: o.get(k) for k in OUTCOME_KEYS}
+        if sc.get("D"):
+            self.wallets.note_outcome(sc["mint"], o.get("label"))
         self.book.add_outcome(journal_line(sc, o))
 
     # --- scoring ----------------------------------------------------------------------------------
@@ -397,7 +472,23 @@ class Engine:
         if row["complete"] is not None:
             real = max((entry[0] - int(tok.info["v_sol0"])) / LAMPORTS, tok.peak_real)
             return light_score(tok.info, real, D, at - tok.t0, now, "DA_TOT_NGHIEP")
-        sc = score_row(row, dslot, entry, D=D, age_s=at - tok.t0, now=now, data=data, rules=self.rules)
+        # the decision-time features: the launch's own trades, and its early buyers' earlier launches
+        cand = FL.Cand(row, dslot, None, entry=(float(entry[0]), float(entry[1])))
+        feats = {**curve_features(cand), **self.wallets.features(row, dslot)}
+        sc = score_row(
+            row,
+            dslot,
+            entry,
+            D=D,
+            age_s=at - tok.t0,
+            now=now,
+            data=data,
+            rules=self.rules,
+            native=native_flags(feats),
+        )
+        sc["features"] = {k: round(v, 6) for k, v in feats.items()}
+        if D is not None:
+            self.wallets.note_launch(row, dslot, at)  # remembered from its first decision on
         # what the 30-minute outcome is measured from
         sc["entry"] = {
             "at": round(at, 3),
@@ -468,5 +559,6 @@ class Engine:
             "frozen_problems": FROZEN_PROBLEMS,
             "journal": {**self.outcomes.stats, "pending": self.outcomes.pending()},
             "rules": self.rules.snapshot(),
+            "wallets": {"wallets": len(self.wallets), "launches": len(self.wallets.launches)},
             **{k: v for k, v in self.stats.items() if k != "started"},
         }

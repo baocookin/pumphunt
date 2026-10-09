@@ -1153,6 +1153,22 @@ def ray_wash_v1(c):
     return c.real_d >= GATE_D and f["wash_share"] >= 0.30, f["wash_share"]
 
 
+# Ray live round 2 (09/10/2026, docs/PREREG-RAY-L2.md).
+def ray_crowd_v1(c):
+    lo = c.dslot - W120
+    wallets = set()
+    for t in reversed(c.vis):
+        if int(t[SLOT]) <= lo:
+            break
+        wallets.add(t[USER])
+    return len(wallets) >= 100, len(wallets)
+
+
+def ray_peak_v1(c):
+    dd = c.get("an", _an)["dd_pre"]
+    return dd <= 0.04, dd
+
+
 def row_features(c):
     """Covariates the scorecard uses for strata and matched placebos (curve and activity level)."""
     v1 = c.get("v1", _v1)
@@ -1657,6 +1673,35 @@ REGISTRY = [
         complete=True,
         thr=0.30,
     ),
+    _f(
+        "RAY-CROWD-v1",
+        ray_crowd_v1,
+        "shadow",
+        "ray-live",
+        ">= 100 distinct wallets trade on the curve in the 120 s up to the decision slot.",
+        "Per-token trades up to the decision slot.",
+        "Decides in Ray only while its forward record passes ray/app/live_rules.py (PREREG-RAY-L2).",
+        "Ray journal 09/10/2026, 837 rows replayed with the live feature code: threshold from the first "
+        "60% (its 67th percentile, 108, rounded down); the ticket did 25 points worse than "
+        "the rows' band x D (95% interval clustered by launch +6..+45) on the first 60% and 36 points "
+        "worse (+19..+53) on the last 40%. Contains every RAY-HOT-v1 row.",
+        thr=100,
+    ),
+    _f(
+        "RAY-PEAK-v1",
+        ray_peak_v1,
+        "shadow",
+        "ray-live",
+        "The curve's real SOL at the decision is within 4% of its peak before it (ANATOMY dd_pre <= 0.04).",
+        "Per-token trades up to the decision slot.",
+        "Decides in Ray only while its forward record passes ray/app/live_rules.py (PREREG-RAY-L2).",
+        "Ray journal 09/10/2026, 837 rows: threshold from the first 60% (its 20th percentile, 0.038, "
+        "rounded up); the ticket did 12 points worse than the rows' band x D (-7..+31) on the first "
+        "60% and 35 points worse (+24..+45) on the last 40%, with 0 winners in 70 rows there. 29% of "
+        "its rows are RAY-CROWD-v1 rows.",
+        thr=0.04,
+        dir="<=",
+    ),
 ]
 BY_ID = {d["id"]: d for d in REGISTRY}
 V1_CHAIN = [
@@ -1780,6 +1825,9 @@ FROZEN = {
     # Ray live round 1, frozen 2026-10-09 (docs/PREREG-RAY-L1.md)
     "RAY-HOT-v1": "5e0698bae2b2c6fb",
     "RAY-WASH-v1": "d3abfd51b48ed38f",
+    # Ray live round 2, frozen 2026-10-09 (docs/PREREG-RAY-L2.md)
+    "RAY-CROWD-v1": "c8322b63559427f7",
+    "RAY-PEAK-v1": "dd0c7915f60326f0",
 }
 
 

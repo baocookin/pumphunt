@@ -9,6 +9,7 @@ asked by hand are counted apart. The founding pool's numbers are in-sample; thes
 from typing import Any
 
 from .live_rules import filter_record
+from .native import BY_ID as NATIVE
 from .sieve import ACTIVE, BASE, FL, FLAGGED, INFO, LABELS, SHADOW, VERDICTS, wilson
 
 LET_THROUGH = ("KHONG_THAY_CO", "IT_HOAT_DONG", "CANH_GIAC", "THIEU_DU_LIEU")
@@ -102,7 +103,7 @@ def build(
 
     filters = []
     banded = [r for r in ok if r.get("band")]
-    for fid in ACTIVE + SHADOW + INFO:
+    for fid in ACTIVE + SHADOW + INFO + list(NATIVE):
         grp = [r for r in ok if fid in _fired(r)]
         fn, ft, fw = FLAGGED.get(fid, (0, 0, 0))
         rec = filter_record(banded, fid)
@@ -110,8 +111,8 @@ def build(
         filters.append(
             {
                 "id": fid,
-                "tier": FL.BY_ID[fid]["tier"],
-                "label": LABELS.get(fid, (fid, ""))[0],
+                "tier": NATIVE[fid]["tier"] if fid in NATIVE else FL.BY_ID[fid]["tier"],
+                "label": NATIVE[fid]["label"] if fid in NATIVE else LABELS.get(fid, (fid, ""))[0],
                 "traps": share(_count(grp, "trap"), len(grp)),
                 "winners": _count(grp, "winner"),
                 # what the same SOL band x decision time gave on the rows where it did not fire

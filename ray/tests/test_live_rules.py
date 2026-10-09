@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from helpers import Cfg, FakeRpc, Launch, pk, row_of
@@ -119,6 +120,27 @@ def test_entering_needs_evidence_and_leaving_needs_it_gone():
     assert rules.allows("SH-SG-1")  # still above the keeping bar
     rules.refresh(_rows("SH-SG-1", 40, 20, 2, 60, 36, 6), NOW, IDS)  # as the band
     assert not rules.allows("SH-SG-1")
+
+
+def test_a_restart_keeps_the_filters_that_decided(tmp_path):
+    weak = _rows("SH-SG-1", 40, 24, 2, 60, 36, 6)  # above the keeping bar, below the entry one
+    book = ScoreBook(tmp_path)
+    for r in _rows("SH-SG-1", 40, 32, 2, 60, 36, 9, tag="a"):
+        book.add_outcome(r)
+    eng = Engine(Cfg(), FakeRpc(), book, clock=lambda: NOW)
+    asyncio.run(eng.refresh_rules())
+    assert eng.rules.allows("SH-SG-1")
+    saved = json.loads((book.dir / "rules.json").read_text())
+    assert saved["ok"] == ["SH-SG-1"]
+    rules = LiveRules()
+    rules.restore(saved["ok"])
+    rules.refresh(weak, NOW, IDS)
+    assert rules.allows("SH-SG-1")  # kept, as it would have been without the restart
+    rules.refresh(weak, NOW, IDS)
+    assert rules.allows("SH-SG-1")
+    fresh = LiveRules()
+    fresh.refresh(weak, NOW, IDS)
+    assert not fresh.allows("SH-SG-1")  # never confirmed: the entry bar
 
 
 def _score_launch(la):
