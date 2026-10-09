@@ -63,7 +63,7 @@ INFO = [
         "P1-SWARM-SCRIPTED-v1",
         "N-MMAAS-MSTX",
         "N-MMAAS-DUSTHOLD",
-        "SH-WASH-1",
+        # SH-WASH-1 is measured by RAY-WASH-v1 (shadow) since live round 1 (docs/PREREG-RAY-L1.md)
         "N-ANAT-FADE",
         "CC-TOPDIST-v1",
         "LC-XFERSUP-v1",
@@ -88,6 +88,8 @@ LABELS: dict[str, tuple[str, str]] = {
     "CC-TOPDIST-v1": ("Top-10 đã bán ≥ 35% hàng của họ trong 60 giây qua", "pct"),
     "LC-XFERSUP-v1": ("Hàng nhận qua transfer đã bán ≥ 5,5% cung", "pct"),
     "N-ANAT-LOCKSTEP": ("Cặp ví mua đồng bộ giữ ≥ 10% float", "pct"),
+    "RAY-HOT-v1": ("Curve quá nóng: ≥ 300 giao dịch trong 2 phút trước lúc chấm", "count"),
+    "RAY-WASH-v1": ("Wash: ví đổi chiều ≥ 3 lần chiếm ≥ 30% volume", "pct"),
 }
 
 # --- founding pool (in-sample) ------------------------------------------------------------------

@@ -30,7 +30,7 @@ Một mốc D chỉ được quyết định trong 45 s sau D; curve phát hiệ
 |---|---|
 | **TRÁNH** | Một bộ lọc chính bật **và đã được coin mới xác nhận** (xem *Luật sống* bên dưới). Các bộ lọc chính: dev + creator còn giữ ≥ 3% cung (SH-DEV-1), sóng mua cùng cỡ ≥ 4 ví trong một slot (N-MMAAS-WAVE-STREAM). |
 | **THIẾU DỮ LIỆU** | Một bộ lọc chính đã được xác nhận cần đủ mọi giao dịch, nhưng chuỗi reserve bị hở, lịch sử bị cắt (quá `RAY_HISTORY_MAX_TX`) hoặc thiếu vị trí giao dịch. |
-| **CẢNH GIÁC** | Chỉ cờ phụ đã được coin mới xác nhận bật (bằng chứng yếu hơn). Các cờ phụ: SH-SG-1, N-MMAAS-SPLDIST, N-MMAAS-WAVE, CLD-ORPHAN-v1. |
+| **CẢNH GIÁC** | Chỉ cờ phụ đã được coin mới xác nhận bật (bằng chứng yếu hơn). Các cờ phụ: SH-SG-1, N-MMAAS-SPLDIST, N-MMAAS-WAVE, CLD-ORPHAN-v1, và từ vòng sống 1 RAY-HOT-v1 (curve quá nóng: ≥ 300 giao dịch trong 2 phút) và RAY-WASH-v1 (wash ≥ 30% volume). |
 | **ÍT HOẠT ĐỘNG** | Không thấy cờ, nhưng 2 phút qua dưới 5 giao dịch, dưới 3 ví mua, hoặc không có giao dịch trong 60 s (ngoài cổng F0). |
 | **KHÔNG THẤY CỜ** | Không bộ lọc nào đã xác nhận bật (cờ chưa xác nhận hay tạm ngưng vẫn được ghi trong phần tóm tắt). **Không phải tín hiệu mua**: tỷ lệ bẫy của tầng trên coin mới vẫn áp dụng (13–30 SOL lúc 2 phút: 79% ngày 09/10). |
 | **DƯỚI CỔNG** | Dưới 11,66 SOL thật: vé 0,5 SOL không thể lỗ 50% trên curve (phí và trượt giá vẫn ăn mòn). Bộ lọc không áp dụng. |
@@ -93,14 +93,21 @@ Tỷ lệ 80–90% mà Rây hiện trước đó là số trong mẫu của kho 
 
 - **Một bộ lọc chỉ quyết định nhãn khi coin mới xác nhận nó.** Trong 7 ngày qua, nó phải đạt cả ba điều:
   - bật ≥ 30 lần, trên ≥ 10 coin;
-  - tỷ lệ bẫy khi bật cao hơn ít nhất 10 điểm so với các coin cùng tầng SOL, cùng mốc mà nó không bật;
+  - tỷ lệ bẫy khi bật cao hơn ít nhất 10 điểm so với các coin cùng tầng SOL, cùng mốc mà nó không bật, và cận dưới khoảng tin cậy 95% của nó cũng không thấp hơn tỷ lệ đó;
   - tỷ lệ thắng khi bật không cao hơn của các coin đó.
+- **Đã được dùng thì giữ** khi vẫn còn cao hơn ít nhất 5 điểm và không nhiều thắng hơn. Hai mức "vào" và "giữ" khác nhau để bộ lọc không bật/tắt theo vài dòng dữ liệu: ngày 09/10, SH-SG-1 được xác nhận rồi tạm ngưng chỉ trong một giờ, khi mới có 30–40 dòng.
 - **Bộ lọc chưa đủ dữ liệu hoặc không đạt** vẫn được tính, vẫn hiện (ghi "chưa xác nhận" hoặc "tạm ngưng") và vẫn được ghi vào nhật ký, nhưng không quyết định nhãn. Khi số liệu của nó đạt chuẩn, nó tự được dùng lại.
 - **Tầng của bộ lọc giữ nguyên:** bộ lọc chính cho TRÁNH, bộ lọc phụ cho CẢNH GIÁC, bộ lọc ngữ cảnh không bao giờ quyết định. Luật này không thăng hạng bộ lọc nào (thăng hạng theo PREREG-SIEVE-R1 mục 5).
 - **Tỷ lệ bẫy hiển thị** lấy từ nhật ký 7 ngày của coin mới, cùng tầng SOL và cùng mốc (cần ≥ 30 dòng; không đủ thì lấy cả tầng). Chưa đủ cả hai thì mới dùng kho sáng lập, và ghi rõ là số trong mẫu.
 - Luật được tính lại mỗi 10 phút (`RAY_RULES_REFRESH_S`). Trạng thái từng bộ lọc nằm ở mục *Nhật ký kết quả → Theo bộ lọc*; mã ở `app/live_rules.py`.
 
-Áp lên dữ liệu đó, chỉ SH-SG-1 được xác nhận: bật 30 lần, 77% bẫy so với kỳ vọng 59%, ít thắng hơn. Tức là tạm thời không còn nhãn TRÁNH, CẢNH GIÁC chỉ đến từ SH-SG-1, còn lại là KHÔNG THẤY CỜ kèm tỷ lệ bẫy thực tế của tầng (ví dụ 13–30 SOL lúc 2 phút: 46/58 = 79%). Coin "không thấy cờ" vẫn phần lớn là bẫy; bộ lọc chỉ giúp được ở rìa.
+Lúc 18:20 UTC ngày 09/10, trên 391 dòng, không còn bộ lọc chính hay phụ nào đạt: không có nhãn TRÁNH, không có CẢNH GIÁC. Mọi coin là KHÔNG THẤY CỜ, kèm tỷ lệ bẫy thực tế của tầng (ví dụ 13–30 SOL lúc 2 phút: khoảng 76–79%). Coin "không thấy cờ" vẫn phần lớn là bẫy; bộ lọc chỉ giúp được ở rìa.
+
+**Vòng sống 1** ([docs/PREREG-RAY-L1.md](../docs/PREREG-RAY-L1.md)). Trên 387 kết quả, mình tìm luật ở 60% đầu và kiểm nguyên ngưỡng ở 40% sau. Trong 148 luật thử, chỉ hai loại tín hiệu giữ được:
+- **Curve quá nóng:** rất nhiều giao dịch ngay trước lúc chấm, khoảng +16 điểm bẫy ở cả hai phần.
+- **Wash:** ví đổi chiều liên tục, khoảng +13 điểm bẫy, rất ít coin thắng.
+
+Chúng được thêm thành RAY-HOT-v1 và RAY-WASH-v1 (tầng phụ, mã mới, đóng băng). Chúng cũng phải qua luật sống trên dữ liệu *sau khi deploy* mới được quyết định nhãn.
 
 ## Cấu hình (biến môi trường)
 

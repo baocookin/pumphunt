@@ -10,10 +10,13 @@ The rule. A filter decides a verdict (TRÁNH for an active one, CẢNH GIÁC for
 once new launches confirm it: in the journal of the last 7 days it has fired on >= 30
 decision-time rows from >= 10 launches and, on those rows,
   - the trap share is at least 10 points above the share the same SOL band x decision time gives
-    on the rows where it did not fire, and
+    on the rows where it did not fire, and the lower end of its 95% Wilson interval is not below
+    that share, and
   - the winner share is not above the share they give.
-Until then ("unproven"), or when its record no longer holds ("suspended"), it is computed, shown and
-journaled but decides nothing, so it decides as soon as its record does. The tiers stay those of
+A confirmed filter keeps deciding while its trap share stays at least 5 points above and its winner
+share not above (amended the same day after SH-SG-1 went in and out within an hour on 30-40 rows:
+entering now needs evidence, leaving needs it gone). Until then ("unproven"), or when its record no
+longer holds ("suspended"), it is computed, shown and journaled but decides nothing. The tiers stay those of
 research/sieve/filters.py: the rule never makes an info filter decide (PREREG-SIEVE-R1 section 5
 for promotions).
 
@@ -24,8 +27,11 @@ for its band (>= 30 rows), else the founding pool's (in-sample, said so).
 from collections import defaultdict
 from typing import Any
 
+from .sieve import wilson
+
 WINDOW_S = 7 * 86_400
-MIN_ROWS, MIN_MINTS, MIN_LIFT = 30, 10, 0.10
+MIN_ROWS, MIN_MINTS = 30, 10
+ENTER_LIFT, KEEP_LIFT = 0.10, 0.05
 MIN_CELL = 30
 
 
@@ -48,9 +54,10 @@ def fired_ids(r: dict[str, Any]) -> set[str]:
     return set(f.get("active") or []) | set(f.get("shadow") or []) | set(f.get("info") or [])
 
 
-def filter_record(rows: list[dict[str, Any]], fid: str) -> dict[str, Any]:
+def filter_record(rows: list[dict[str, Any]], fid: str, was_ok: bool = False) -> dict[str, Any]:
     """A filter's record on these rows: its trap and winner shares when it fired, and the shares the
-    same band x decision time give on the rows where it did not fire (scored and silent)."""
+    same band x decision time give on the rows where it did not fire (scored and silent). `was_ok`:
+    it decides now, so the keeping bar applies instead of the entry one."""
     on = [r for r in rows if fid in fired_ids(r)]
     cells: dict[tuple[Any, Any], list[int]] = defaultdict(lambda: [0, 0, 0])
     for r in rows:
@@ -83,10 +90,14 @@ def filter_record(rows: list[dict[str, Any]], fid: str) -> dict[str, Any]:
     }
     if n < MIN_ROWS or rec["mints"] < MIN_MINTS or not used:
         rec["status"] = "unproven"
-    elif rec["trap_on"] - rec["trap_exp"] >= MIN_LIFT and rec["win_on"] <= rec["win_exp"]:
-        rec["status"] = "ok"
+        return rec
+    lift = rec["trap_on"] - rec["trap_exp"]
+    fewer_winners = rec["win_on"] <= rec["win_exp"]
+    if was_ok:
+        ok = lift >= KEEP_LIFT and fewer_winners
     else:
-        rec["status"] = "suspended"
+        ok = lift >= ENTER_LIFT and wilson(traps, n)[0] >= rec["trap_exp"] and fewer_winners
+    rec["status"] = "ok" if ok else "suspended"
     return rec
 
 
@@ -111,7 +122,8 @@ class LiveRules:
                 c[1] += trap
         self.cells = {k: (v[0], v[1]) for k, v in cells.items()}
         self.bands = {k: (v[0], v[1]) for k, v in bands.items()}
-        self.filters = {fid: filter_record(rows, fid) for fid in ids}
+        was = {fid for fid, rec in self.filters.items() if rec["status"] == "ok"}
+        self.filters = {fid: filter_record(rows, fid, fid in was) for fid in ids}
         self.rows = len(rows)
         self.at = now
 
