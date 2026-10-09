@@ -22,6 +22,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .config import settings
 from .engine import JOURNAL_FILE, Engine, OnDemandLimit, ScoreBook
+from .native import registry as native_registry
 from .outcome import HOLD_S
 from .report import build as build_report
 from .rpc import BudgetExhausted, CreditMeter, Rpc, describe_error
@@ -264,7 +265,8 @@ def journal_file(name: str):
 
 @api.get("/registry", dependencies=[Depends(require_owner)])
 def filters():
-    return {"filters": registry(), "pool_text": POOL_TEXT, "frozen_problems": FROZEN_PROBLEMS}
+    filters = registry() + native_registry()
+    return {"filters": filters, "pool_text": POOL_TEXT, "frozen_problems": FROZEN_PROBLEMS}
 
 
 # --- the research recorder's data files (public, as before the switch) --------------------------

@@ -52,6 +52,9 @@ def test_no_flag_is_not_a_buy_signal():
     tok = la.buy(la.dev, 1.0, la.s0, la.t0, in_create=True)
     la.sell(la.dev, tok, la.s0 + 4, la.t0 + 2)
     _crowd(la, 45, la.s0 + 30)
+    # a round trip leaves the curve ~13% under its peak, so RAY-PEAK-v1 stays silent too
+    tok = la.buy(pk(2_000), 2.0, la.s0 + 200, la.t0 + 60)
+    la.sell(pk(2_000), tok, la.s0 + 203, la.t0 + 61)
     sc = _score(la)
     assert not any(f["fired"] for f in sc["active"] + sc["shadow"]), [f for f in sc["active"] + sc["shadow"]]
     assert sc["verdict"] == "KHONG_THAY_CO"

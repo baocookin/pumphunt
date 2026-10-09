@@ -19,6 +19,8 @@ Chạy được từ repo, không cần thư mục scratch.
 
 **Vòng sống 1 (09/10/2026).** Bộ chấm thời gian thực Rây (`ray/`) ghi kết quả 30 phút của mọi lần chấm. Trên nhật ký đó, hai bộ lọc phụ mới được tìm ở phần đầu và kiểm nguyên ngưỡng ở phần sau: RAY-HOT-v1 (curve quá nóng) và RAY-WASH-v1 (phép đo của SH-WASH-1, xếp ở tầng shadow). Chúng được thêm vào cuối `filters.py`, kèm hash đóng băng. Trong Rây, mọi bộ lọc chỉ quyết định nhãn khi luật sống (`ray/app/live_rules.py`) xác nhận chúng trên dữ liệu mới. Chi tiết ở [docs/PREREG-RAY-L1.md](../../docs/PREREG-RAY-L1.md).
 
+**Vòng sống 2 (09/10/2026).** Thêm RAY-CROWD-v1 (≥ 100 ví giao dịch trong 2 phút) và RAY-PEAK-v1 (SOL thật cách đỉnh ≤ 4%) vào cuối `filters.py`, cũng tầng shadow và đóng băng. Bộ lọc thứ ba của vòng này, RAY-SERIAL-v1, đọc bộ nhớ ví của Rây nên nằm ở `ray/app/native.py`, cùng kỷ luật hash. Chi tiết ở [docs/PREREG-RAY-L2.md](../../docs/PREREG-RAY-L2.md).
+
 Cờ trong journal là cờ **chưa qua cổng**. Mọi phủ quyết và mọi con số đều áp GATE_E (`real_e >= 11.66`):
 dưới mức đó, vé 0,5 SOL không thể lỗ 50%. Hàm của filter chỉ đọc lệnh có slot <= dslot. Filter có bộ nhớ
 chỉ đọc các launch được tạo trước ứng viên, và chỉ các sự kiện có block time <= t_dec. Router

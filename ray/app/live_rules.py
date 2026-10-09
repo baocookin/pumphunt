@@ -29,6 +29,9 @@ lower end of a 95% interval clustered by launch above zero; it keeps deciding wh
 research/sieve/filters.py: the rule never makes an info filter decide (PREREG-SIEVE-R1 section 5
 for promotions).
 
+Which filters decide is saved at each refresh (data/ray/rules.json) and read back at start, so a
+restart or a deploy keeps the keeping bar for the filters that were deciding.
+
 The risk shown is the journal's trap share for the launch's band x decision time (>= 30 rows), else
 for its band (>= 30 rows), else the founding pool's (in-sample, said so).
 """
@@ -140,6 +143,12 @@ class LiveRules:
         self.cells: dict[tuple[str, int], tuple[int, int, float]] = {}  # rows, traps, net sum
         self.bands: dict[str, tuple[int, int, float]] = {}
         self.filters: dict[str, dict[str, Any]] = {}
+        self.restored: set[str] = set()  # filters that decided before a restart (rules.json)
+
+    def restore(self, ok: list[str]) -> None:
+        """The filters that decided when the app stopped: the keeping bar, not the entry one, applies
+        to them at the first refresh (a deploy does not make a confirmed filter prove itself again)."""
+        self.restored = set(ok)
 
     def refresh(self, lines: list[dict[str, Any]], now: float, ids: list[str]) -> None:
         rows = journal_rows(lines, now - WINDOW_S)
@@ -153,7 +162,8 @@ class LiveRules:
                 c[2] += float(r.get("net") or 0.0)
         self.cells = {k: (int(v[0]), int(v[1]), v[2]) for k, v in cells.items()}
         self.bands = {k: (int(v[0]), int(v[1]), v[2]) for k, v in bands.items()}
-        was = {fid for fid, rec in self.filters.items() if rec["status"] == "ok"}
+        was = {fid for fid, rec in self.filters.items() if rec["status"] == "ok"} | self.restored
+        self.restored = set()
         self.filters = {fid: filter_record(rows, fid, fid in was) for fid in ids}
         self.rows = len(rows)
         self.at = now

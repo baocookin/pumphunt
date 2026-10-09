@@ -262,6 +262,7 @@ class Cfg:
     outcome_tick_s = 5.0
     archive_rows = True
     rules_refresh_s = 600.0
+    wallets_save_s = 900.0
 
     def __init__(self, **kw):
         for k, v in kw.items():

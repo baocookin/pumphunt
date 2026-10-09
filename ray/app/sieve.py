@@ -90,6 +90,8 @@ LABELS: dict[str, tuple[str, str]] = {
     "N-ANAT-LOCKSTEP": ("Cặp ví mua đồng bộ giữ ≥ 10% float", "pct"),
     "RAY-HOT-v1": ("Curve quá nóng: ≥ 300 giao dịch trong 2 phút trước lúc chấm", "count"),
     "RAY-WASH-v1": ("Wash: ví đổi chiều ≥ 3 lần chiếm ≥ 30% volume", "pct"),
+    "RAY-CROWD-v1": ("Đông bất thường: ≥ 100 ví giao dịch trong 2 phút trước lúc chấm", "count"),
+    "RAY-PEAK-v1": ("Đang ở sát đỉnh: SOL thật lúc chấm cách đỉnh trước đó ≤ 4%", "pct"),
 }
 
 # --- founding pool (in-sample) ------------------------------------------------------------------
@@ -362,10 +364,12 @@ def score_row(
     now: float,
     data: dict[str, Any],
     rules: Any = None,
+    native: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Score a census-format row at `dslot` with the curve at `entry` (v_sol, v_tokens) now. With
     `rules` (app/live_rules.py), a filter its journal record has suspended is shown but decides
-    nothing until new launches confirm it, and the risk comes from the journal."""
+    nothing until new launches confirm it, and the risk comes from the journal. `native`: the flags of
+    Ray's own filters (app/native.py, they read the wallet memory), placed by their tier."""
     info = row
     out = header(info, D, age_s, now)
     cand = FL.Cand(row, dslot, None, entry=(float(entry[0]), float(entry[1])))
@@ -391,11 +395,14 @@ def score_row(
                 and (chain_ok or not d["complete"])
                 and not (raw is None and d["none_unscored"])
             )
-            flag = _flag(fid, fired, raw, scored)
-            flag["deciding"] = group != "info" and decides(fid)
-            rec = rules.record(fid) if rules is not None else None
+            groups[group].append(_flag(fid, fired, raw, scored))
+    for flag in native or []:
+        groups[flag["tier"]].append(dict(flag))
+    for group, flags in groups.items():
+        for flag in flags:
+            flag["deciding"] = group != "info" and decides(flag["id"])
+            rec = rules.record(flag["id"]) if rules is not None else None
             flag["live"] = None if rec is None else {k: rec[k] for k in LIVE_KEYS}
-            groups[group].append(flag)
     f0 = f0_activity(cand)
     real_d, real_e = cand.real_d, cand.real_e
     fired_active = [f["id"] for f in groups["active"] if f["fired"] and f["deciding"]]

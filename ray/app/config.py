@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     outcome_tick_s: float = 5.0
     # How often the live rule (which filters may decide, the risk shown) is recomputed from the journal.
     rules_refresh_s: float = 600.0
+    # How often the wallet memory (app/wallets.py) is pruned and saved to data/ray/wallets.json.gz.
+    wallets_save_s: float = 900.0
     # Keep the trades of every launch scored at a decision time (rows-*.jsonl.gz, ~20 MB a day), so a
     # new filter can be run on past weeks without reading the chain again.
     archive_rows: bool = True

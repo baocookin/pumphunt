@@ -30,7 +30,7 @@ Một mốc D chỉ được quyết định trong 45 s sau D; curve phát hiệ
 |---|---|
 | **TRÁNH** | Một bộ lọc chính bật **và đã được coin mới xác nhận** (xem *Luật sống* bên dưới). Các bộ lọc chính: dev + creator còn giữ ≥ 3% cung (SH-DEV-1), sóng mua cùng cỡ ≥ 4 ví trong một slot (N-MMAAS-WAVE-STREAM). |
 | **THIẾU DỮ LIỆU** | Một bộ lọc chính đã được xác nhận cần đủ mọi giao dịch, nhưng chuỗi reserve bị hở, lịch sử bị cắt (quá `RAY_HISTORY_MAX_TX`) hoặc thiếu vị trí giao dịch. |
-| **CẢNH GIÁC** | Chỉ cờ phụ đã được coin mới xác nhận bật (bằng chứng yếu hơn). Các cờ phụ: SH-SG-1, N-MMAAS-SPLDIST, N-MMAAS-WAVE, CLD-ORPHAN-v1, và từ vòng sống 1 RAY-HOT-v1 (curve quá nóng: ≥ 300 giao dịch trong 2 phút) và RAY-WASH-v1 (wash ≥ 30% volume). |
+| **CẢNH GIÁC** | Chỉ cờ phụ đã được coin mới xác nhận bật (bằng chứng yếu hơn). Các cờ phụ: SH-SG-1, N-MMAAS-SPLDIST, N-MMAAS-WAVE, CLD-ORPHAN-v1; từ vòng sống 1 RAY-HOT-v1 (curve quá nóng: ≥ 300 giao dịch trong 2 phút) và RAY-WASH-v1 (wash ≥ 30% volume); từ vòng sống 2 RAY-CROWD-v1 (≥ 100 ví giao dịch trong 2 phút), RAY-PEAK-v1 (SOL thật cách đỉnh ≤ 4%) và RAY-SERIAL-v1 (ví mua sớm chuyên nghiệp mang ≥ 50% tiền mua sớm). |
 | **ÍT HOẠT ĐỘNG** | Không thấy cờ, nhưng 2 phút qua dưới 5 giao dịch, dưới 3 ví mua, hoặc không có giao dịch trong 60 s (ngoài cổng F0). |
 | **KHÔNG THẤY CỜ** | Không bộ lọc nào đã xác nhận bật (cờ chưa xác nhận hay tạm ngưng vẫn được ghi trong phần tóm tắt). **Không phải tín hiệu mua**: tỷ lệ bẫy của tầng trên coin mới vẫn áp dụng (13–30 SOL lúc 2 phút: 79% ngày 09/10). |
 | **DƯỚI CỔNG** | Dưới 11,66 SOL thật: vé 0,5 SOL không thể lỗ 50% trên curve (phí và trượt giá vẫn ăn mòn). Bộ lọc không áp dụng. |
@@ -72,6 +72,7 @@ Số của kho sáng lập là số trong mẫu; số trong báo cáo là trên 
 | `scores-YYYY-MM-DD.jsonl` | Mọi lần chấm, đầy đủ cờ và giá trị thô. |
 | `outcomes-YYYY-MM-DD.jsonl` | Kết quả 30 phút, mỗi dòng kèm phán quyết, cờ đã bật, tầng SOL, tỷ lệ Rây đã báo và reserve lúc mua (theo ngày của lần chấm). |
 | `rows-YYYY-MM-DD.jsonl.gz` | Toàn bộ giao dịch tới mốc cuối của mỗi coin được chấm ở mốc, cùng định dạng census của nghiên cứu (khoảng 20 MB/ngày; tắt bằng `RAY_ARCHIVE_ROWS=false`). |
+| `wallets.json.gz` | Bộ nhớ ví (xem *Bộ nhớ ví* bên dưới). Mất file thì Rây dựng lại từ `rows-*` và `outcomes-*` của 2 ngày gần nhất. |
 
 **Vá bộ lọc mỗi tuần:**
 1. Mở báo cáo 7 ngày và đọc các bẫy lọt lưới trước: cờ nào suýt bật, giống kiểu nào đã biết.
@@ -103,6 +104,7 @@ Tỷ lệ 80–90% mà Rây hiện trước đó là số trong mẫu của kho 
 - **Bộ lọc chưa đủ dữ liệu hoặc không đạt** vẫn được tính, vẫn hiện (ghi "chưa xác nhận" hoặc "tạm ngưng") và vẫn được ghi vào nhật ký, nhưng không quyết định nhãn. Khi số liệu của nó đạt chuẩn, nó tự được dùng lại.
 - **Tầng của bộ lọc giữ nguyên:** bộ lọc chính cho TRÁNH, bộ lọc phụ cho CẢNH GIÁC, bộ lọc ngữ cảnh không bao giờ quyết định. Luật này không thăng hạng bộ lọc nào (thăng hạng theo PREREG-SIEVE-R1 mục 5).
 - **Tỷ lệ bẫy hiển thị** lấy từ nhật ký 7 ngày của coin mới, cùng tầng SOL và cùng mốc (cần ≥ 30 dòng; không đủ thì lấy cả tầng). Chưa đủ cả hai thì mới dùng kho sáng lập, và ghi rõ là số trong mẫu. Đi kèm là lãi/lỗ trung bình của vé ở tầng đó, và **rủi ro của cùng tầng theo từng mốc**. Thời gian là yếu tố mạnh nhất đo được: tối 09/10, ở tầng 13–30 SOL, mốc 2 phút có 73% bẫy và vé lỗ trung bình −26%, còn mốc 10 phút (coin còn trụ) có 44% bẫy, vé khoảng −2%.
+- Danh sách bộ lọc đang được dùng được lưu ở `<data>/ray/rules.json` mỗi lần tính lại. Khi khởi động lại hay deploy, các bộ lọc này vẫn chỉ cần mức "giữ", không phải chứng minh lại từ đầu.
 - Luật được tính lại mỗi 10 phút (`RAY_RULES_REFRESH_S`). Trạng thái từng bộ lọc nằm ở mục *Nhật ký kết quả → Theo bộ lọc*; mã ở `app/live_rules.py`.
 
 Lúc 18:20 UTC ngày 09/10, trên 391 dòng, không còn bộ lọc chính hay phụ nào đạt: không có nhãn TRÁNH, không có CẢNH GIÁC. Mọi coin là KHÔNG THẤY CỜ, kèm tỷ lệ bẫy thực tế của tầng (ví dụ 13–30 SOL lúc 2 phút: khoảng 76–79%). Coin "không thấy cờ" vẫn phần lớn là bẫy; bộ lọc chỉ giúp được ở rìa.
@@ -114,6 +116,25 @@ Lúc 18:20 UTC ngày 09/10, trên 391 dòng, không còn bộ lọc chính hay p
 Chúng được thêm thành RAY-HOT-v1 và RAY-WASH-v1 (tầng phụ, mã mới, đóng băng). Chúng cũng phải qua luật sống trên dữ liệu *sau khi deploy* mới được quyết định nhãn. Đến 21:10 UTC, chỉ trên dữ liệu sau deploy:
 - **RAY-WASH-v1** được xác nhận theo luật tiền: bật 48 lần, coin nó chặn lỗ thêm 28 điểm, khoảng tin cậy +4…+53.
 - **RAY-HOT-v1** suýt đạt: bật 67 lần, +23 điểm, khoảng tin cậy −1…+47.
+
+**Vòng sống 2** ([docs/PREREG-RAY-L2.md](../docs/PREREG-RAY-L2.md)). Trên 837 kết quả, mình thử 20 đặc trưng lúc chấm, kể cả bộ nhớ ví, thành 80 luật. Mình tìm ở 60% đầu và kiểm nguyên ngưỡng ở 40% sau, chấm bằng tiền như luật sống. Có 8 luật qua chuẩn vào của luật sống ở phần sau; kiểm đa so sánh Benjamini–Hochberg giữ đúng 8 luật đó. Sau khi gộp các phép đo trùng nhau, còn ba bộ lọc mới (tầng phụ, đóng băng):
+- **RAY-CROWD-v1:** ≥ 100 ví giao dịch trong 2 phút trước lúc chấm. Phần kiểm: vé kém hơn 36 điểm, khoảng tin cậy +19…+53.
+- **RAY-PEAK-v1:** đang ở sát đỉnh, SOL thật cách đỉnh trước đó ≤ 4%. Phần kiểm: +35 điểm (+24…+45), 0 coin thắng trong 70 dòng.
+- **RAY-SERIAL-v1:** ví mua sớm ở ≥ 2 coin trước mang ≥ 50% tiền mua trong 60 s đầu. Phần kiểm: +20 điểm (+6…+33).
+
+Ba bộ lọc này cũng chỉ quyết định nhãn sau khi luật sống xác nhận chúng trên dữ liệu sau deploy.
+
+## Bộ nhớ ví và đặc trưng lúc chấm (từ vòng sống 2)
+
+- **Đặc trưng lúc chấm:** mỗi lần chấm ở mốc tính 20 đặc trưng, chỉ từ giao dịch có slot ≤ slot lúc chấm (`app/features.py`). Chúng được ghi vào `scores-*` và `outcomes-*` (khoá `features`), để mô hình rủi ro và các bộ lọc sau này học lại trên dữ liệu đã có.
+- **Bộ nhớ ví** (`app/wallets.py`):
+  - Mỗi coin được ghi một lần, ở lần chấm đầu: ví nào mua trong 60 s đầu, ví nào trong số đó đã bán ≥ 50% hàng mua sớm trước lúc chấm.
+  - Khi có kết quả 30 phút đầu tiên của coin, kết quả đó được cộng vào hồ sơ của từng ví mua sớm và của dev.
+  - Đặc trưng của một coin không bao giờ tính chính nó: khi chấm lại ở 5 hay 10 phút, phần của chính nó được trừ ra.
+  - Ví chỉ mua sớm một lần bị quên sau 1 ngày; ví khác sau 7 ngày không thấy lại.
+  - Bộ nhớ được lưu mỗi 15 phút (`RAY_WALLETS_SAVE_S`).
+  - Trạng thái hiện ở `/api/state` (khoá `wallets`).
+- **Bộ lọc gốc của Rây** (`app/native.py`): bộ lọc đọc bộ nhớ ví không nằm được trong gói nghiên cứu, nên được định nghĩa ở đây. Chúng cùng kỷ luật đóng băng: hash phủ cả hàm lẫn các định nghĩa đặc trưng và cách bộ nhớ đếm. Sửa tại chỗ sẽ hiện trên health check.
 
 ## Cấu hình (biến môi trường)
 
@@ -135,6 +156,7 @@ Chúng được thêm thành RAY-HOT-v1 và RAY-WASH-v1 (tầng phụ, mã mới
 | `RAY_OUTCOME_TICK_S` | 5 | Bao lâu kiểm tra các kết quả 30 phút đến hạn một lần. |
 | `RAY_ARCHIVE_ROWS` | true | Lưu giao dịch của các coin được chấm (`rows-*.jsonl.gz`). |
 | `RAY_RULES_REFRESH_S` | 600 | Bao lâu tính lại luật sống của bộ lọc từ nhật ký. |
+| `RAY_WALLETS_SAVE_S` | 900 | Bao lâu cắt tỉa và lưu bộ nhớ ví (`wallets.json.gz`). |
 | `RAY_TELEGRAM_BOT_TOKEN`, `RAY_TELEGRAM_CHAT_ID` | | Bot Telegram riêng (xem dưới). |
 | `RAY_TELEGRAM_PUSH` | `[]` | Nhãn tự đẩy về Telegram, ví dụ `["TRANH","KHONG_THAY_CO"]`. |
 | `RAY_PUBLIC_URL` | | Link bảng điều khiển gắn vào tin Telegram. |
@@ -202,6 +224,9 @@ Docker: `docker build -f ray/Dockerfile -t ray .` từ gốc repo. Image chép `
 | `app/outcome.py` | Kết quả 30 phút: công thức vé của nghiên cứu, đọc đúng giờ hoặc từ lịch sử. |
 | `app/report.py` | Báo cáo nhật ký so với kho sáng lập. |
 | `app/live_rules.py` | Luật sống: bộ lọc nào được quyết định nhãn, tỷ lệ bẫy từ coin mới. |
+| `app/features.py` | Đặc trưng lúc chấm: hoạt động trên curve, lệnh mua, dòng tiền, hồ sơ ví mua sớm. |
+| `app/wallets.py` | Bộ nhớ ví: ví mua sớm ở các coin trước và kết quả của các coin đó. |
+| `app/native.py` | Bộ lọc gốc của Rây (đọc bộ nhớ ví), đóng băng bằng hash. |
 | `app/api.py`, `app/static/index.html` | API và bảng điều khiển. |
 | `app/telegram.py` | Bot Telegram riêng. |
 
