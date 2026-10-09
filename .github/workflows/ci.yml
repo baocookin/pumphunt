@@ -10,7 +10,9 @@ jobs:
     # production keeps its state in Redis: the store contract tests run against a real server
     services:
       redis:
-        image: redis:7
+        # Docker Hub's official image through AWS's public mirror: runners share IPs, and Docker
+        # Hub's unauthenticated pull limit failed this job before any test ran (09/10/2026).
+        image: public.ecr.aws/docker/library/redis:7
         ports:
           - 6379:6379
         options: >-
