@@ -18,6 +18,7 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .config import settings
 from .engine import Engine, OnDemandLimit, ScoreBook
@@ -77,14 +78,41 @@ async def lifespan(app: FastAPI):
         await client.aclose()
 
 
+class NoStore:
+    """Marks every answer no-store, so the Bunny CDN in front of the app never keeps the owner's pages
+    whatever the zone's cache settings (it does not keep them today)."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_no_store(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"cache-control"]
+                message = {**message, "headers": [*headers, (b"cache-control", b"no-store, private")]}
+            await send(message)
+
+        await self.app(scope, receive, send_no_store)
+
+
 app = FastAPI(title="ray", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(NoStore)
 api = APIRouter(prefix="/api")
 _basic = HTTPBasic(auto_error=False)
 
 
+LOCKED = "Chưa đặt RAY_PASSWORD trong biến môi trường của app: bảng điều khiển bị khoá."
+# Said when a request carried credentials anyway: they reached the app through the CDN.
+SENT = " Trình duyệt đã gửi mật khẩu, nhưng app chưa có mật khẩu để so."
+
+
 def require_owner(creds: HTTPBasicCredentials | None = Depends(_basic)) -> None:
     if not settings.password:
-        raise HTTPException(503, "Chưa đặt RAY_PASSWORD: bảng điều khiển bị khoá.")
+        raise HTTPException(503, LOCKED + (SENT if creds else ""))
     if creds is None or not secrets.compare_digest(creds.password.encode(), settings.password.encode()):
         raise HTTPException(401, "Cần mật khẩu.", headers={"WWW-Authenticate": 'Basic realm="ray"'})
 
@@ -236,10 +264,6 @@ app.include_router(api)
 @app.get("/", include_in_schema=False)
 def dashboard(creds: HTTPBasicCredentials | None = Depends(_basic)):
     if not settings.password:
-        return HTMLResponse(
-            "<h1>Rây</h1><p>Chưa đặt RAY_PASSWORD trong biến môi trường của app: "
-            "bảng điều khiển bị khoá.</p>",
-            status_code=503,
-        )
+        return HTMLResponse(f"<h1>Rây</h1><p>{LOCKED}{SENT if creds else ''}</p>", status_code=503)
     require_owner(creds)
     return FileResponse(STATIC / "index.html", media_type="text/html")
