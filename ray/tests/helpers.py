@@ -126,6 +126,23 @@ class Launch:
             self.txs.append(self._tx(slot, ts, idx, [payload]))
         return tok
 
+    def finish(self, user: str, sol_sol: float, slot: int, ts: int, idx: int | None = 1):
+        """The buy that completes the curve: its trade and the complete event in one transaction."""
+        sol = int(sol_sol * LAMPORTS)
+        k = self.vs * self.vt
+        self.vs += sol
+        tok = self.vt - k // self.vs
+        self.vt = k // self.vs
+        vals = {"user": user, "mint": self.mint, "bonding_curve": self.curve, "timestamp": ts}
+        vals["quote_mint"] = SYSTEM
+        done = enc(chain.COMPLETE, vals, disc_for("complete"))
+        self.txs.append(self._tx(slot, ts, idx, [self._trade_payload(user, sol, tok, True, ts), done]))
+        self.complete = True
+
+    def migrate(self):
+        """The curve's reserves move to the AMM pool: the account reads empty, still complete."""
+        self.vs = self.vt = 0
+
     def sell(self, user: str, tok: int, slot: int, ts: int, idx: int | None = 1):
         k = self.vs * self.vt
         new_vt = self.vt + tok
@@ -180,7 +197,10 @@ class FakeRpc:
             and (t_to is None or tx["blockTime"] <= t_to)
             and (lag is None or tx["blockTime"] <= lag)
         ]
-        txs.sort(key=lambda tx: (tx["blockTime"], tx["slot"], tx.get("transactionIndex") or 0))
+        txs.sort(
+            key=lambda tx: (tx["blockTime"], tx["slot"], tx.get("transactionIndex") or 0),
+            reverse=sort == "desc",
+        )
         start = int(token or 0)
         page = txs[start : start + limit]
         self.meter.add(gtfa_credits(len(page)), kind)
@@ -218,6 +238,8 @@ class Cfg:
     sync_waits_s = [0.0, 0.0]
     ondemand_per_hour = 60
     keep_scores = 100
+    outcome_tick_s = 5.0
+    archive_rows = True
 
     def __init__(self, **kw):
         for k, v in kw.items():

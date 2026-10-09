@@ -17,27 +17,62 @@ import datetime
 import gzip
 import itertools
 import json
+import re
 import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from .chain import LAMPORTS, classic_sol, create_of, launch_info, parse_curve_account, signature_of
+from .chain import (
+    LAMPORTS,
+    chain_breaks,
+    classic_sol,
+    create_of,
+    launch_info,
+    parse_curve_account,
+    signature_of,
+)
 from .history import History
 from .live import Census, Token, Tracker
+from .outcome import Outcomes, journal_line
 from .rpc import BudgetExhausted, Rpc, describe_error
-from .sieve import FROZEN_PROBLEMS, light_score, score_row
+from .sieve import FL, FROZEN_PROBLEMS, light_score, score_row
 
 LIGHT = {"below_gate": "DUOI_CONG", "beyond": "NGOAI_VUNG", "graduated": "DA_TOT_NGHIEP"}
+OUTCOME_KEYS = ("status", "net", "label", "why", "how", "due", "read_at", "real_exit")
 
 
 class OnDemandLimit(Exception):
     """The hour's allowance of scores asked by mint is used up."""
 
 
+JOURNAL_FILE = re.compile(r"(scores|outcomes|rows)-\d{4}-\d{2}-\d{2}\.jsonl(\.gz)?")
+
+
+def day_of(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%d")
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not path.is_file():
+        return out
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as fh:
+        for line in fh:
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+    return out
+
+
 class ScoreBook:
-    """Recent scores in memory, every score appended to a daily JSONL file under data_dir/ray/."""
+    """Recent scores in memory, and the journal under data_dir/ray/, one file per UTC day:
+    scores-*.jsonl (every score), outcomes-*.jsonl (each full score's 30-minute outcome, by the day
+    of its entry) and rows-*.jsonl.gz (the trades of every launch scored at a decision time, up to
+    its last decision, so a new filter can be run on past weeks without reading the chain again)."""
 
     def __init__(self, data_dir: str | Path, keep: int = 3_000):
         self.dir = Path(data_dir) / "ray"
@@ -48,14 +83,23 @@ class ScoreBook:
         self._day = ""
 
     def _path(self, ts: float) -> Path:
-        day = datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%d")
-        return self.dir / f"scores-{day}.jsonl"
+        return self.dir / f"scores-{day_of(ts)}.jsonl"
 
     def _remember(self, sc: dict[str, Any]) -> None:
         self.latest[sc["mint"]] = sc
         self.latest.move_to_end(sc["mint"])
         while len(self.latest) > self.keep:
             self.latest.popitem(last=False)
+
+    def _append(self, path: Path, line: dict[str, Any]) -> None:
+        text = json.dumps(line, separators=(",", ":"), ensure_ascii=False) + "\n"
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            opener = gzip.open if path.suffix == ".gz" else open
+            with opener(path, "at") as fh:
+                fh.write(text)
+        except OSError:
+            pass  # the dashboard works without the journal
 
     def add(self, sc: dict[str, Any]) -> None:
         self.recent.appendleft(sc)
@@ -64,31 +108,48 @@ class ScoreBook:
         if day != self._day:
             self._day, self.count_today = day, 0
         self.count_today += 1
-        try:
-            self.dir.mkdir(parents=True, exist_ok=True)
-            with open(self._path(sc["at"]), "a") as fh:
-                fh.write(json.dumps(sc, separators=(",", ":"), ensure_ascii=False) + "\n")
-        except OSError:
-            pass  # the dashboard works without the log
+        self._append(self._path(sc["at"]), sc)
+
+    def add_outcome(self, line: dict[str, Any]) -> None:
+        self._append(self.dir / f"outcomes-{day_of(line['entry_at'])}.jsonl", line)
+
+    def add_row(self, row: dict[str, Any], ts: float) -> None:
+        self._append(self.dir / f"rows-{day_of(ts)}.jsonl.gz", row)
 
     def load(self, now: float) -> int:
-        """Scores of yesterday and today back into memory (oldest first, so the newest lead)."""
+        """Scores of yesterday and today back into memory (oldest first, so the newest lead), with
+        the outcomes already settled."""
         rows: list[dict[str, Any]] = []
+        outcomes: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
         for ts in (now - 86_400, now):
-            p = self._path(ts)
-            opener = gzip.open if p.suffix == ".gz" else open
-            if not p.is_file():
-                continue
-            with opener(p, "rt") as fh:
-                for line in fh:
-                    try:
-                        rows.append(json.loads(line))
-                    except ValueError:
-                        continue
+            rows += read_jsonl(self._path(ts))
+            for o in read_jsonl(self.dir / f"outcomes-{day_of(ts)}.jsonl"):
+                outcomes[(o.get("mint"), o.get("key"), o.get("score_at"))] = o
         for sc in rows[-(self.recent.maxlen or 0) :]:
+            o = outcomes.get((sc.get("mint"), sc.get("key"), sc.get("at")))
+            if o is not None:
+                sc["outcome"] = {k: o.get(k) for k in OUTCOME_KEYS}
             self.recent.appendleft(sc)
             self._remember(sc)
         return len(rows)
+
+    def outcome_lines(self, since: float, now: float) -> list[dict[str, Any]]:
+        """The outcome journal from the day of `since` to the day of `now`."""
+        out: list[dict[str, Any]] = []
+        ts = since
+        while day_of(ts) <= day_of(now):
+            out += read_jsonl(self.dir / f"outcomes-{day_of(ts)}.jsonl")
+            ts += 86_400
+        return out
+
+    def journal_files(self) -> list[dict[str, Any]]:
+        if not self.dir.is_dir():
+            return []
+        return [
+            {"name": p.name, "bytes": p.stat().st_size}
+            for p in sorted(self.dir.iterdir())
+            if p.is_file() and JOURNAL_FILE.fullmatch(p.name)
+        ]
 
     def save_credits(self, snap: dict[str, Any]) -> None:
         with contextlib.suppress(OSError):
@@ -132,17 +193,23 @@ class Engine:
             "last_poll": 0.0,
             "last_error": None,
             "scored": 0,
-            "outcomes": {},
+            "outcome_errors": 0,
+            "outcomes": {},  # decision outcomes: score, small, below_gate, ...
             "unsynced": 0,
             "alive": {},  # loop name -> wall time of its last round, failed or not
         }
         rpc.meter.restore(book.load_credits())  # a restart keeps the day's count
+        # The 30-minute outcome of every full score; the ones a restart interrupted are read again.
+        self.outcomes = Outcomes(rpc, self._outcome, clock)
+        for sc in book.recent:
+            self.outcomes.track(sc)
 
     # --- loops ------------------------------------------------------------------------------------
     async def run(self) -> None:
         tasks = [
             asyncio.create_task(self._every(self.cfg.census_s, self.census_once, "census")),
             asyncio.create_task(self._every(self.cfg.poll_tick_s, self.poll_once, "poll")),
+            asyncio.create_task(self._every(self.cfg.outcome_tick_s, self.outcomes.run_once, "outcome")),
         ]
         tasks += [asyncio.create_task(self._worker()) for _ in range(max(1, self.cfg.workers))]
         try:
@@ -192,7 +259,9 @@ class Engine:
                 self.tracker.apply_read(tok, slot, parse_curve_account(val), at)
         for tok, D, outcome in self.tracker.decisions(self.clock()):
             self._decided(tok, D, outcome)
-        self.tracker.retire(self.clock())
+        for tok in self.tracker.retire(self.clock()):
+            if not tok.pending:
+                self._release(tok)
         self.stats["last_poll"] = now
         return len(due)
 
@@ -215,30 +284,53 @@ class Engine:
             if tok is None:
                 continue
             try:
-                sc = await self.score_token(tok, D, anchor=anchor)
+                self._record(tok, await self.score_token(tok, D, anchor=anchor))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - one launch failing must not stop the worker
                 self.stats["score_errors"] += 1
                 self.stats["last_error"] = f"{mint[:8]}: {describe_error(exc)}"
-                continue
             finally:
-                self._settled(tok)
-            self._record(tok, sc)
+                self._settled(tok)  # after the score is recorded: a retired launch is archived with it
 
     def _settled(self, tok: Token) -> None:
         """A queued scoring finished: a retired launch's history goes once none is left."""
         tok.pending = max(0, tok.pending - 1)
         if not tok.pending and tok.mint not in self.tracker.live:
-            tok.history = None
+            self._release(tok)
+
+    def _release(self, tok: Token) -> None:
+        """A launch out of the live set with no scoring left: the trades of a launch scored at its
+        decision times go to the row archive (once), then its history is freed."""
+        h, tok.history = tok.history, None
+        if h is None or tok.archived or not self.cfg.archive_rows:
+            return
+        entries = {k: sc["entry"] for k, sc in tok.scores.items() if k.startswith("D") and sc.get("entry")}
+        if not entries:
+            return
+        last = max(int(e["slot"]) for e in entries.values())
+        row = h.row()
+        row["trades"] = [t for t in row["trades"] if int(t[0]) <= last]
+        if row["complete"] and int(row["complete"]["slot"]) > last:
+            row["complete"] = None
+        row["chain_breaks"] = chain_breaks(row["trades"], int(tok.info["v_tokens0"]))
+        row["window"] = {**row["window"], "last_slot": last}
+        row["scored"] = entries
+        tok.archived = True
+        self.book.add_row(row, tok.t0)
 
     def _record(self, tok: Token, sc: dict[str, Any]) -> None:
         tok.scores[sc["key"]] = sc
         self.book.add(sc)
+        self.outcomes.track(sc)
         self.stats["scored"] += 1
         for fn in self.listeners:
             task = asyncio.ensure_future(fn(sc))
             task.add_done_callback(lambda t: t.exception())  # a failed push is not an engine error
+
+    def _outcome(self, sc: dict[str, Any], o: dict[str, Any]) -> None:
+        sc["outcome"] = {k: o.get(k) for k in OUTCOME_KEYS}
+        self.book.add_outcome(journal_line(sc, o))
 
     # --- scoring ----------------------------------------------------------------------------------
     async def _read_state(self, tok: Token) -> None:
@@ -293,7 +385,18 @@ class Engine:
         if row["complete"] is not None:
             real = max((entry[0] - int(tok.info["v_sol0"])) / LAMPORTS, tok.peak_real)
             return light_score(tok.info, real, D, at - tok.t0, now, "DA_TOT_NGHIEP")
-        return score_row(row, dslot, entry, D=D, age_s=at - tok.t0, now=now, data=data)
+        sc = score_row(row, dslot, entry, D=D, age_s=at - tok.t0, now=now, data=data)
+        # what the 30-minute outcome is measured from
+        sc["entry"] = {
+            "at": round(at, 3),
+            "slot": int(dslot),
+            "v_sol": int(entry[0]),
+            "v_tokens": int(entry[1]),
+            "v_sol0": int(tok.info["v_sol0"]),
+            "fee": FL.fee_of(row),
+            "curve": tok.curve,
+        }
+        return sc
 
     def ondemand_left(self) -> int:
         now = self.clock()
@@ -332,6 +435,8 @@ class Engine:
         else:
             sc = await self.score_token(tok, None, kind="ondemand")
         self._record(tok, sc)
+        if tok.mint not in self.tracker.live and not tok.pending:
+            tok.history = None  # a launch scored by hand keeps its scores, not its trades
         return sc
 
     def status(self) -> dict[str, Any]:
@@ -349,5 +454,6 @@ class Engine:
             "ondemand_left": self.ondemand_left(),
             "scores_today": self.book.count_today,
             "frozen_problems": FROZEN_PROBLEMS,
+            "journal": {**self.outcomes.stats, "pending": self.outcomes.pending()},
             **{k: v for k, v in self.stats.items() if k != "started"},
         }

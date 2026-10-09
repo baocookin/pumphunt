@@ -4,7 +4,8 @@ import pytest
 from helpers import Cfg, FakeRpc, Launch, pk
 
 from app.chain import MINT_AUTHORITY
-from app.engine import Engine, OnDemandLimit, ScoreBook
+from app.engine import Engine, OnDemandLimit, ScoreBook, day_of, read_jsonl
+from app.outcome import HOLD_S, INDEX_WAIT_S
 from app.rpc import CreditMeter
 
 T0 = 1_800_000_000
@@ -50,8 +51,8 @@ def _drain(eng: Engine):
         _, _, mint, D, anchor = eng.queue.get_nowait()
         tok = eng.tracker.get(mint)
         sc = run(eng.score_token(tok, D, anchor=anchor))
-        eng._settled(tok)
         eng._record(tok, sc)
+        eng._settled(tok)
         out.append(sc)
     return out
 
@@ -82,6 +83,11 @@ def test_a_launch_is_found_read_and_scored_at_its_decision_time(tmp_path):
         assert len([c for c in rpc.calls[calls:] if c == ("gtfa", la.curve)]) == 1
     assert tok.scores.keys() == {"D120", "D300", "D600"}
     assert la.mint not in eng.tracker.live and tok.history is None and tok.pending == 0
+    # its trades up to the last decision went to the row archive, once
+    rows = read_jsonl(tmp_path / "ray" / f"rows-{day_of(T0)}.jsonl.gz")
+    assert [r["mint"] for r in rows] == [la.mint] and set(rows[0]["scored"]) == {"D120", "D300", "D600"}
+    last = max(e["slot"] for e in rows[0]["scored"].values())
+    assert rows[0]["trades"] and all(t[0] <= last for t in rows[0]["trades"])
 
 
 def test_a_launch_found_late_misses_the_decision_times_it_passed(tmp_path):
@@ -211,3 +217,67 @@ def test_a_graduated_curve_shows_its_peak_not_the_emptied_account(tmp_path):
     sc = tok.scores["D120"]
     assert tok.done == {120: "graduated"} and sc["verdict"] == "DA_TOT_NGHIEP"
     assert sc["real"] == pytest.approx(peak, abs=1e-4) and sc["floor"] is None
+
+
+def _scored_at_120(tmp_path):
+    la, rpc, clock, eng = _setup(tmp_path)
+    run(eng.census_once())
+    clock.t = T0 + 121
+    run(eng.poll_once())
+    sc = _drain(eng)[0]
+    assert sc["entry"]["slot"] == rpc.slot and eng.outcomes.pending() == 1
+    return la, rpc, clock, eng, sc
+
+
+def _dump(la: Launch, slot: int, ts: int, share: float = 0.9):
+    la.sell(pk(77), int((1_073_000_000_000_000 - la.vt) * share), slot, ts)
+
+
+def test_a_score_gets_its_30_minute_outcome_from_the_curve_account(tmp_path):
+    la, rpc, clock, eng, sc = _scored_at_120(tmp_path)
+    _dump(la, rpc.slot + 500, T0 + 400)  # the crowd's tokens sold back: a trap for the ticket
+    clock.t = sc["entry"]["at"] + HOLD_S - 1
+    assert run(eng.outcomes.run_once()) == 0  # not yet
+    clock.t = sc["entry"]["at"] + HOLD_S + 2
+    assert run(eng.outcomes.run_once()) == 1
+    o = sc["outcome"]
+    assert o["label"] == "trap" and o["net"] <= -0.5 and (o["how"], o["why"]) == ("account", "time")
+    line = read_jsonl(tmp_path / "ray" / f"outcomes-{day_of(sc['entry']['at'])}.jsonl")[0]
+    assert line["verdict"] == "TRANH" and line["fired"]["active"] == ["SH-DEV-1"] and line["label"] == "trap"
+    assert line["band"] == "13-30" and eng.outcomes.pending() == 0
+
+
+def test_a_curve_that_graduated_is_sold_at_its_completion(tmp_path):
+    la, rpc, clock, eng, sc = _scored_at_120(tmp_path)
+    la.finish(pk(88), 60.0, rpc.slot + 900, T0 + 700)
+    completed = (la.vs, la.vt)
+    la.migrate()
+    due = sc["entry"]["at"] + HOLD_S
+    clock.t = due + 1
+    run(eng.outcomes.run_once())  # the account reads complete: the history is read once indexed
+    assert "outcome" not in sc and eng.outcomes.pending() == 1
+    clock.t = due + INDEX_WAIT_S + 1
+    assert run(eng.outcomes.run_once()) == 1
+    o = sc["outcome"]
+    assert (o["how"], o["why"], o["label"]) == ("history", "grad", "winner")
+    assert o["real_exit"] == pytest.approx((completed[0] - 30_000_000_000) / 1e9, abs=1e-4)
+
+
+def test_an_outcome_a_restart_interrupted_is_read_from_the_history_at_its_due_time(tmp_path):
+    la, rpc, clock, eng, sc = _scored_at_120(tmp_path)
+    _dump(la, rpc.slot + 500, T0 + 400)
+    due = sc["entry"]["at"] + HOLD_S
+    la.buy(pk(99), 80.0, rpc.slot + 9_000, int(due) + 100)  # after the due time: not the exit
+    clock.t = due + 3_600  # the app was down at the due time
+    book = ScoreBook(tmp_path)
+    assert book.load(clock.t) >= 1
+    eng2 = Engine(Cfg(), rpc, book, clock=clock)
+    assert eng2.outcomes.pending() == 1
+    assert run(eng2.outcomes.run_once()) == 1
+    o = book.latest[la.mint]["outcome"]
+    assert (o["how"], o["why"], o["label"]) == ("history", "time", "trap")
+    # settled outcomes come back with their scores and are not read again
+    book3 = ScoreBook(tmp_path)
+    book3.load(clock.t)
+    assert book3.latest[la.mint]["outcome"]["label"] == "trap"
+    assert Engine(Cfg(), rpc, book3, clock=clock).outcomes.pending() == 0

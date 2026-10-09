@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     sync_waits_s: list[float] = [3.0, 5.0, 8.0, 10.0, 14.0]
 
     ondemand_per_hour: int = 60  # scores asked by mint (dashboard, Telegram)
+    # Outcome journal: every full score's ticket valued 30 minutes after its entry (checked this often).
+    outcome_tick_s: float = 5.0
+    # Keep the trades of every launch scored at a decision time (rows-*.jsonl.gz, ~20 MB a day), so a
+    # new filter can be run on past weeks without reading the chain again.
+    archive_rows: bool = True
     keep_scores: int = 3_000  # scores kept in memory for the dashboard
 
     # Optional private Telegram bot: answers /score <mint> in this one chat, and can push verdicts.

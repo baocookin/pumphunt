@@ -10,6 +10,7 @@
   --red: #b42318; --red-bg: #fde8e7; --amber: #9a5b00; --amber-bg: #fff1d6;
   --blue: #1f5aa8; --blue-bg: #e4eefb; --slate: #3b4552; --slate-bg: #e9edf2;
   --violet: #5b3fa0; --violet-bg: #eee8fa; --gray: #6b7280; --gray-bg: #eef0f2;
+  --green: #1a7f37; --green-bg: #e3f4e8;
   --accent: #1f5aa8;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,6 +19,7 @@
     --red: #ff8a80; --red-bg: #3a1513; --amber: #ffc46b; --amber-bg: #3a2a0c;
     --blue: #8fb8ff; --blue-bg: #14243d; --slate: #c8d0db; --slate-bg: #262c34;
     --violet: #c4b1ff; --violet-bg: #2a2140; --gray: #a0a8b3; --gray-bg: #23282f;
+    --green: #7ee2a1; --green-bg: #12301d;
     --accent: #8fb8ff;
   }
 }
@@ -60,6 +62,11 @@ tr.click:hover td { background: var(--bg); }
 .on { color: var(--red); font-weight: 600; }
 .off { color: var(--muted); }
 .na { color: var(--violet); }
+.win { color: var(--green); font-weight: 600; }
+td.wrap { white-space: normal; min-width: 180px; }
+.seg button { padding: 4px 12px; }
+h3 { font-size: 13px; margin: 14px 0 6px; }
+details summary { cursor: pointer; color: var(--accent); }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
 .kv { background: var(--bg); border-radius: 8px; padding: 6px 8px; }
 .kv b { display: block; font-size: 16px; }
@@ -99,9 +106,16 @@ a { color: var(--accent); }
     <h2>Điểm gần đây</h2>
     <div class="filters row" id="vfilters"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Lúc</th><th>Coin</th><th>Mint</th><th>Mốc</th><th class="num">SOL thật</th><th>Phán quyết</th><th class="num">Tỷ lệ bẫy</th><th class="num">Sàn lỗ</th><th>Cờ</th></tr></thead>
+      <thead><tr><th>Lúc</th><th>Coin</th><th>Mint</th><th>Mốc</th><th class="num">SOL thật</th><th>Phán quyết</th><th class="num">Tỷ lệ bẫy</th><th class="num">Sàn lỗ</th><th class="num">Sau 30 phút</th><th>Cờ</th></tr></thead>
       <tbody id="recent"></tbody>
     </table></div>
+  </section>
+  <section>
+    <h2>Nhật ký kết quả</h2>
+    <p class="muted">Mỗi lần chấm ở mốc 2, 5, 10 phút được đối chiếu 30 phút sau: vé 0,5 SOL mua lúc chấm lỗ ≥ 50% là <span class="on">bẫy</span>, lãi ≥ 100% là <span class="win">thắng</span> (định nghĩa của nghiên cứu). Đây là số trên coin mới, ngoài mẫu, khác với số của kho sáng lập.</p>
+    <div class="row seg" id="report-days"><button data-days="1" class="ghost">1 ngày</button><button data-days="7">7 ngày</button><button data-days="30" class="ghost">30 ngày</button></div>
+    <div id="report"><p class="muted">Đang tải…</p></div>
+    <details id="journal-box" style="margin-top:12px"><summary>Tải nhật ký (file JSONL theo ngày)</summary><div id="journal-files" class="muted">Đang tải…</div></details>
   </section>
 </main>
 <footer id="foot"></footer>
@@ -144,6 +158,7 @@ function renderStatus(st, build) {
   if (c.cap) chips.push(`<span class="chip ${c.spent >= c.cap ? "bad" : ""}">credit hôm nay ${Number(c.spent).toLocaleString("vi-VN")} / ${Number(c.cap).toLocaleString("vi-VN")}</span>`);
   if (s.scores_today != null) chips.push(`<span class="chip">${s.scores_today} lần chấm hôm nay</span>`);
   if (s.queue) chips.push(`<span class="chip">hàng chờ ${s.queue}</span>`);
+  if (s.journal) chips.push(`<span class="chip">${s.journal.pending} lần chấm chờ kết quả 30 phút</span>`);
   if (s.ondemand_left != null) chips.push(`<span class="chip">còn ${s.ondemand_left} lượt chấm tay/giờ</span>`);
   if (s.frozen_problems && s.frozen_problems.length) chips.push(`<span class="chip bad">bộ lọc bị sửa tại chỗ: không tin được</span>`);
   if (s.last_error) chips.push(`<span class="chip bad" title="${esc(s.last_error)}">lỗi gần nhất</span>`);
@@ -164,7 +179,20 @@ function renderLive(live) {
   }).join("") || `<tr><td colspan="7" class="muted">Chưa có curve nào từ 2 SOL.</td></tr>`;
 }
 
-function flagNames(ids) { return ids.map(id => esc(labels[id] || id)).join("; "); }
+function flagNames(ids) { return (ids || []).map(id => esc(labels[id] || id)).join("; "); }
+function signed(x) { return x == null ? "—" : (x >= 0 ? "+" : "−") + Math.abs(Math.round(x * 100)) + "%"; }
+function outcomeText(o) {
+  if (!o) return "";
+  if (o.status !== "ok") return '<span class="muted">không đọc được</span>';
+  const cls = o.label === "trap" ? "on" : o.label === "winner" ? "win" : "";
+  const tag = o.label === "trap" ? " bẫy" : o.label === "winner" ? " thắng" : "";
+  return `<span class="${cls}">${signed(o.net)}${tag}</span>${o.why === "grad" ? ' <span class="muted">tốt nghiệp</span>' : ""}`;
+}
+function outcomeCell(r) {
+  if (r.outcome) return outcomeText(r.outcome);
+  if (r.due) return `<span class="muted">chờ ${Math.max(0, Math.ceil((r.due - Date.now() / 1000) / 60))} phút</span>`;
+  return '<span class="muted">—</span>';
+}
 
 function renderRecent(recent) {
   const rows = recent.filter(r => shown.has(r.verdict));
@@ -172,9 +200,9 @@ function renderRecent(recent) {
       <td class="muted">${clock(r.at)}</td><td>${coin(r)}</td><td class="mono">${esc(short(r.mint))}</td>
       <td>${esc(r.D ? (r.D / 60) + " phút" : "tay")}</td><td class="num">${sol(r.real)}</td>
       <td>${vchip(r.verdict, r.verdict_vi)}</td><td class="num">${r.risk ? pct(r.risk.pct) : "—"}</td>
-      <td class="num">${r.floor == null ? "—" : pct(r.floor)}</td>
+      <td class="num">${r.floor == null ? "—" : pct(r.floor)}</td><td class="num">${outcomeCell(r)}</td>
       <td>${flagNames(r.fired)}${r.info && r.info.length ? ` <span class="muted">· ${flagNames(r.info)}</span>` : ""}</td></tr>`).join("")
-    || `<tr><td colspan="9" class="muted">Chưa có lần chấm nào khớp bộ lọc.</td></tr>`;
+    || `<tr><td colspan="10" class="muted">Chưa có lần chấm nào khớp bộ lọc.</td></tr>`;
 }
 
 function renderFilters() {
@@ -211,6 +239,8 @@ function scoreCard(sc) {
       <div class="kv"><b>${sc.floor == null ? "—" : pct(sc.floor)}</b><span>sàn lỗ trên curve (vé 0,5 SOL)</span></div>
     </div>
     <p class="muted">${esc(rk.basis || "")}${rk.n ? ", n = " + rk.n : ""}${rk.note ? ". " + esc(rk.note) : ""}</p>
+    ${sc.outcome ? `<p>Sau 30 phút: ${outcomeText(sc.outcome)} <span class="muted">(vé 0,5 SOL mua lúc chấm${sc.outcome.why === "grad" ? ", bán lúc tốt nghiệp" : ""})</span></p>`
+      : sc.entry ? `<p class="muted">Kết quả 30 phút có lúc ${clock(sc.entry.at + 1800)}.</p>` : ""}
     ${flagList("Bộ lọc chính (quyết định TRÁNH)", sc.active)}
     ${flagList("Cờ phụ (bằng chứng yếu)", sc.shadow)}
     ${flagList("Ngữ cảnh", sc.info)}
@@ -220,6 +250,69 @@ function scoreCard(sc) {
        <a href="https://solscan.io/token/${encodeURIComponent(sc.mint)}" target="_blank" rel="noopener">Solscan</a> ·
        <span class="mono">${esc(sc.mint)}</span></p>
   </div>`;
+}
+
+const TIER = {active: "chính", shadow: "phụ", info: "ngữ cảnh"};
+let reportDays = 7, reportAt = 0;
+function shareText(s) {
+  if (!s || !s.n) return '<span class="muted">—</span>';
+  return `${s.k}/${s.n} = <b>${pct(s.pct)}</b> <span class="muted">(${pct(s.ci[0])}–${pct(s.ci[1])})</span>`;
+}
+function tableOf(head, body, empty) {
+  return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="9" class="muted">${esc(empty)}</td></tr>`}</tbody></table></div>`;
+}
+function briefRows(rows) {
+  return rows.map(r => `<tr class="click" data-mint="${esc(r.mint)}">
+    <td class="muted">${clock(r.entry_at)}</td><td><b>${esc(r.symbol || "?")}</b></td><td class="mono">${esc(short(r.mint))}</td>
+    <td>${esc(r.D / 60)} phút</td><td>${vchip(r.verdict)}</td><td class="num">${sol(r.real)}</td>
+    <td class="num">${signed(r.net)}${r.why === "grad" ? ' <span class="muted">tốt nghiệp</span>' : ""}</td>
+    <td class="wrap">${flagNames(r.fired)}${r.info && r.info.length ? ` <span class="muted">· ${flagNames(r.info)}</span>` : ""}</td></tr>`).join("");
+}
+const BRIEF_HEAD = '<th>Lúc chấm</th><th>Coin</th><th>Mint</th><th>Mốc</th><th>Phán quyết</th><th class="num">SOL thật</th><th class="num">Sau 30 phút</th><th>Cờ</th>';
+function renderReport(r) {
+  const t = r.totals;
+  const out = [`<p>${t.settled} lần chấm ở các mốc đã có kết quả${t.pending ? `, ${t.pending} đang chờ` : ""}${t.unresolved ? `, ${t.unresolved} không đọc được` : ""}${t.by_hand ? `; ${t.by_hand} lần chấm tay tính riêng` : ""}.
+    Tỷ lệ bẫy: ${shareText(r.overall)}, thắng: ${t.winners}. Kho sáng lập (trong mẫu): ${shareText(r.pool)}.</p>`];
+  if (!t.settled) {
+    out.push('<p class="muted">Chưa có kết quả nào trong khoảng này: kết quả của một lần chấm có 30 phút sau lúc quyết định.</p>');
+    return out.join("");
+  }
+  out.push("<h3>Theo phán quyết</h3>" + tableOf(
+    '<th>Phán quyết</th><th class="num">Bẫy thực tế (KTC 95%)</th><th class="num">Rây đã báo</th><th class="num">Thắng</th>',
+    r.verdicts.map(v => `<tr><td>${vchip(v.verdict, v.verdict_vi)}</td><td class="num">${shareText(v.traps)}</td>
+      <td class="num">${v.risk_mean == null ? "—" : pct(v.risk_mean)}</td><td class="num">${v.winners}</td></tr>`).join(""), ""));
+  out.push("<h3>Theo tầng SOL và mốc</h3>" + tableOf(
+    '<th>Tầng SOL</th><th>Mốc</th><th class="num">Bẫy trên coin mới</th><th class="num">Thắng</th><th class="num">Kho sáng lập</th>',
+    r.bands.map(b => `<tr><td>${esc(b.band)}</td><td>${b.D / 60} phút</td><td class="num">${shareText(b.traps)}</td>
+      <td class="num">${b.traps.n ? b.winners : "—"}</td><td class="num">${shareText(b.pool)}</td></tr>`).join(""), ""));
+  out.push("<h3>Theo bộ lọc</h3>" + tableOf(
+    '<th>Bộ lọc</th><th>Nhóm</th><th class="num">Khi bật: bẫy trên coin mới</th><th class="num">Thắng</th><th class="num">Kho sáng lập</th>',
+    r.filters.map(f => `<tr><td class="wrap" title="${esc(f.id)}">${esc(f.label)}</td><td class="muted">${esc(TIER[f.tier] || f.tier)}</td>
+      <td class="num">${shareText(f.traps)}</td><td class="num">${f.traps.n ? f.winners : "—"}</td>
+      <td class="num">${shareText(f.pool)}, ${f.pool.winners} thắng</td></tr>`).join(""), ""));
+  out.push(`<h3>Bẫy lọt lưới (${r.missed.count})</h3><p class="muted">Nhãn KHÔNG THẤY CỜ, ÍT HOẠT ĐỘNG, CẢNH GIÁC hoặc THIẾU DỮ LIỆU nhưng lỗ ≥ 50% sau 30 phút: đọc chúng trước khi vá bộ lọc.</p>`
+    + tableOf(BRIEF_HEAD, briefRows(r.missed.rows), "Không có."));
+  out.push(`<h3>Báo động nhầm (${r.false_alarms.count})</h3><p class="muted">Nhãn TRÁNH nhưng lãi ≥ 100% sau 30 phút.</p>`
+    + tableOf(BRIEF_HEAD, briefRows(r.false_alarms.rows), "Không có."));
+  return out.join("");
+}
+async function loadReport(days) {
+  if (days) reportDays = days;
+  document.querySelectorAll("#report-days button").forEach(b => { b.className = Number(b.dataset.days) === reportDays ? "" : "ghost"; });
+  const el = document.getElementById("report");
+  reportAt = Date.now();
+  try {
+    el.innerHTML = renderReport(await getJSON("/api/report?days=" + reportDays));
+  } catch (e) { el.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+async function loadJournalFiles() {
+  const el = document.getElementById("journal-files");
+  try {
+    const files = (await getJSON("/api/journal")).files || [];
+    el.innerHTML = files.length ? files.slice().reverse().map(f =>
+      `<div><a href="/api/journal/${encodeURIComponent(f.name)}">${esc(f.name)}</a> <span class="muted">${Math.max(1, Math.round(f.bytes / 1024))} KB</span></div>`).join("")
+      : "Chưa có file nào.";
+  } catch (e) { el.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 async function openDetail(mint) {
@@ -267,6 +360,7 @@ async function refresh() {
     renderStatus(st, st.build_sha); renderLive(st.live || []); renderRecent(st.recent || []);
     document.getElementById("foot").textContent = (st.pool_text || "") + " Theo NĐ 284/2026: không chia sẻ, không bán tín hiệu.";
     failures = 0;
+    if (Date.now() - reportAt > 300000) loadReport();
   } catch (e) {
     failures++;
     document.getElementById("status").innerHTML = `<span class="chip bad">${esc(e.message)}</span>`;
@@ -288,6 +382,8 @@ document.addEventListener("click", e => {
 window.addEventListener("hashchange", () => { const m = location.hash.slice(1); if (m) openDetail(m); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
 document.getElementById("go").onclick = () => scoreNow(document.getElementById("mint").value);
+document.querySelectorAll("#report-days button").forEach(b => b.addEventListener("click", () => loadReport(Number(b.dataset.days))));
+document.getElementById("journal-box").addEventListener("toggle", e => { if (e.target.open) loadJournalFiles(); });
 document.getElementById("mint").addEventListener("keydown", e => { if (e.key === "Enter") scoreNow(e.target.value); });
 
 (async () => {

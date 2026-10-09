@@ -63,6 +63,21 @@ def test_no_answer_may_be_kept_by_the_cdn(client):
     assert r.headers["cache-control"] == "no-store, private"
 
 
+def test_the_report_and_the_journal_files_need_the_password(client, tmp_path):
+    (tmp_path / "ray").mkdir(exist_ok=True)
+    (tmp_path / "ray" / "outcomes-2026-10-09.jsonl").write_text("")
+    (tmp_path / "ray" / "credits.json").write_text("{}")
+    for path in ("/api/report", "/api/journal", "/api/journal/outcomes-2026-10-09.jsonl"):
+        assert client.get(path).status_code == 401
+    r = client.get("/api/report?days=7", auth=("a", "pw"))
+    assert r.status_code == 200 and r.json()["totals"]["settled"] == 0 and r.json()["pool"]["n"] == 206
+    files = client.get("/api/journal", auth=("a", "pw")).json()["files"]
+    assert [f["name"] for f in files] == ["outcomes-2026-10-09.jsonl"]
+    assert client.get("/api/journal/outcomes-2026-10-09.jsonl", auth=("a", "pw")).status_code == 200
+    assert client.get("/api/journal/credits.json", auth=("a", "pw")).status_code == 404
+    assert "ray" not in [f["name"] for f in client.get("/api/files").json()["files"]]
+
+
 def test_scoring_needs_a_valid_mint_and_a_running_engine(client):
     assert client.post("/api/score/not-a-mint", auth=("a", "pw")).status_code == 400
     assert client.post(f"/api/score/{MINT}", auth=("a", "pw")).status_code == 503
