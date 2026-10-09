@@ -71,6 +71,7 @@ def test_the_report_and_the_journal_files_need_the_password(client, tmp_path):
         assert client.get(path).status_code == 401
     r = client.get("/api/report?days=7", auth=("a", "pw"))
     assert r.status_code == 200 and r.json()["totals"]["settled"] == 0 and r.json()["pool"]["n"] == 206
+    assert {"model", "candidates"} <= r.json().keys()  # None until an engine runs
     files = client.get("/api/journal", auth=("a", "pw")).json()["files"]
     assert [f["name"] for f in files] == ["outcomes-2026-10-09.jsonl"]
     assert client.get("/api/journal/outcomes-2026-10-09.jsonl", auth=("a", "pw")).status_code == 200

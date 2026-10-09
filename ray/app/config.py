@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     rules_refresh_s: float = 600.0
     # How often the wallet memory (app/wallets.py) is pruned and saved to data/ray/wallets.json.gz.
     wallets_save_s: float = 900.0
+    # How often the risk model (app/model.py) is refitted and the candidate scan rerun.
+    model_refit_s: float = 3600.0
     # Keep the trades of every launch scored at a decision time (rows-*.jsonl.gz, ~20 MB a day), so a
     # new filter can be run on past weeks without reading the chain again.
     archive_rows: bool = True

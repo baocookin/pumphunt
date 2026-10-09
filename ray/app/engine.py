@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from .candidates import scan as scan_candidates
 from .chain import (
     LAMPORTS,
     chain_breaks,
@@ -37,15 +38,20 @@ from .features import curve_features
 from .history import History
 from .live import Census, Token, Tracker
 from .live_rules import WINDOW_S, LiveRules
+from .model import factors as model_factors
+from .model import fit as fit_model
+from .model import held_out
+from .model import predict as model_predict
 from .native import IDS as NATIVE_IDS
 from .native import evaluate as native_flags
 from .outcome import Outcomes, journal_line
 from .rpc import BudgetExhausted, Rpc, describe_error
-from .sieve import ACTIVE, FL, FROZEN_PROBLEMS, INFO, SHADOW, light_score, score_row
+from .sieve import ACTIVE, FL, FROZEN_PROBLEMS, INFO, SHADOW, band, d_bucket, light_score, score_row
 from .wallets import WalletBook
 
 WALLETS_FILE = "wallets.json.gz"
 RULES_FILE = "rules.json"  # which filters decided at the last refresh, kept across restarts
+MODEL_FILE = "model.json"  # the risk model last fitted (app/model.py), kept across restarts
 
 LIGHT = {"below_gate": "DUOI_CONG", "beyond": "NGOAI_VUNG", "graduated": "DA_TOT_NGHIEP"}
 OUTCOME_KEYS = ("status", "net", "label", "why", "how", "due", "read_at", "real_exit")
@@ -204,6 +210,7 @@ class Engine:
             "outcome_errors": 0,
             "rules_errors": 0,
             "wallets_errors": 0,
+            "model_errors": 0,
             "outcomes": {},  # decision outcomes: score, small, below_gate, ...
             "unsynced": 0,
             "alive": {},  # loop name -> wall time of its last round, failed or not
@@ -217,6 +224,10 @@ class Engine:
         self.rules = LiveRules()
         # What wallets did early in earlier launches (app/wallets.py); loaded or rebuilt by run().
         self.wallets = WalletBook()
+        # The risk model in shadow (app/model.py), its held-out record, and the candidate scan.
+        self.model: dict[str, Any] | None = None
+        self.model_eval: dict[str, Any] = {}
+        self.candidates: dict[str, Any] = {}
 
     # --- loops ------------------------------------------------------------------------------------
     async def run(self) -> None:
@@ -224,12 +235,17 @@ class Engine:
             await self.load_wallets()
         with contextlib.suppress(OSError, ValueError, AttributeError):
             self.rules.restore(json.loads((self.book.dir / RULES_FILE).read_text()).get("ok") or [])
+        with contextlib.suppress(OSError, ValueError):
+            m = json.loads((self.book.dir / MODEL_FILE).read_text())
+            if isinstance(m, dict) and {"w", "lo", "hi", "mu", "sd", "n", "trained_at"} <= m.keys():
+                self.model = m
         tasks = [
             asyncio.create_task(self._every(self.cfg.census_s, self.census_once, "census")),
             asyncio.create_task(self._every(self.cfg.poll_tick_s, self.poll_once, "poll")),
             asyncio.create_task(self._every(self.cfg.outcome_tick_s, self.outcomes.run_once, "outcome")),
             asyncio.create_task(self._every(self.cfg.rules_refresh_s, self.refresh_rules, "rules")),
             asyncio.create_task(self._every(self.cfg.wallets_save_s, self.save_wallets, "wallets")),
+            asyncio.create_task(self._every(self.cfg.model_refit_s, self.refit_model, "model")),
         ]
         tasks += [asyncio.create_task(self._worker()) for _ in range(max(1, self.cfg.workers))]
         try:
@@ -277,6 +293,58 @@ class Engine:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(text)
         tmp.replace(path)
+
+    async def refit_model(self) -> dict[str, Any] | None:
+        """Fit the risk model on the last 7 days, score its held-out record, and scan for candidates
+        (all in a thread: the fit is pure Python, about 20 s on a full week)."""
+        now = self.clock()
+        lines = await asyncio.to_thread(self.book.outcome_lines, now - WINDOW_S, now)
+        model = await asyncio.to_thread(fit_model, lines, now)
+        if model is not None:
+            self.model = model
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(self._write, self.book.dir / MODEL_FILE, json.dumps(model))
+        self.model_eval = await asyncio.to_thread(held_out, lines, now)
+        registered = ACTIVE + SHADOW + NATIVE_IDS
+        self.candidates = await asyncio.to_thread(scan_candidates, lines, now, registered)
+        return self.model
+
+    def model_view(self) -> dict[str, Any]:
+        """The model's state for the status and the report."""
+        m = self.model
+        return {
+            "trained_at": m["trained_at"] if m else None,
+            "n": m["n"] if m else 0,
+            "traps": m["traps"] if m else 0,
+            "factors": model_factors(m),
+            "eval": self.model_eval,
+            "active": bool(self.model_eval.get("active")),
+        }
+
+    def _apply_model(self, sc: dict[str, Any], feats: dict[str, float], age_s: float) -> None:
+        """Record the model's probability with the score; once the switch rule holds, show it as the
+        risk (the band x decision time share stays with the score as `base_pct`)."""
+        rk = sc.get("risk") or {}
+        rk["base_pct"] = rk.get("pct")
+        real_d = sc.get("real_d")
+        b = band(float(real_d)) if real_d is not None else None
+        p = model_predict(self.model, feats, b, sc.get("D") or d_bucket(age_s))
+        if p is None or self.model is None:
+            return
+        active = bool(self.model_eval.get("active"))
+        m = self.model
+        sc["model"] = {"p": round(p, 4), "trained_at": m["trained_at"], "n": m["n"], "active": active}
+        if active and rk.get("pct") is not None:
+            ev = self.model_eval
+            rk.update(
+                pct=p,
+                k=None,
+                n=self.model["n"],
+                ci=None,
+                model=True,
+                basis=f"mô hình rủi ro (học trên {self.model['n']} kết quả 7 ngày qua; đã tốt hơn tầng × mốc "
+                f"trên {ev.get('qualified_days')} ngày nó chưa thấy)",
+            )
 
     # --- wallet memory ----------------------------------------------------------------------------
     async def load_wallets(self) -> int:
@@ -487,6 +555,7 @@ class Engine:
             native=native_flags(feats),
         )
         sc["features"] = {k: round(v, 6) for k, v in feats.items()}
+        self._apply_model(sc, feats, at - tok.t0)
         if D is not None:
             self.wallets.note_launch(row, dslot, at)  # remembered from its first decision on
         # what the 30-minute outcome is measured from
@@ -560,5 +629,12 @@ class Engine:
             "journal": {**self.outcomes.stats, "pending": self.outcomes.pending()},
             "rules": self.rules.snapshot(),
             "wallets": {"wallets": len(self.wallets), "launches": len(self.wallets.launches)},
+            "model": {
+                "trained_at": self.model["trained_at"] if self.model else None,
+                "n": self.model["n"] if self.model else 0,
+                "active": bool(self.model_eval.get("active")),
+                "held_out_rows": self.model_eval.get("rows", 0),
+                "candidates": len(self.candidates.get("candidates") or []),
+            },
             **{k: v for k, v in self.stats.items() if k != "started"},
         }

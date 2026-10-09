@@ -263,6 +263,7 @@ class Cfg:
     archive_rows = True
     rules_refresh_s = 600.0
     wallets_save_s = 900.0
+    model_refit_s = 3600.0
 
     def __init__(self, **kw):
         for k, v in kw.items():

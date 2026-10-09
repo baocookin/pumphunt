@@ -65,6 +65,9 @@ def journal_line(sc: dict[str, Any], o: dict[str, Any]) -> dict[str, Any]:
         "real_d": real_d,
         "band": band(float(real_d)) if real_d is not None else None,
         "risk": rk.get("pct"),
+        # the risk without the model, and the model's probability (app/model.py's held-out record)
+        "base_risk": rk.get("base_pct", rk.get("pct")),
+        "model_p": (sc.get("model") or {}).get("p"),
         "fired": {g: [f["id"] for f in fl if f.get("fired")] for g, fl in groups.items()},
         "unscored": [f["id"] for f in groups["active"] + groups["shadow"] if not f.get("scored")],
         "chain_ok": data.get("chain_ok"),

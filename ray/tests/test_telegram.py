@@ -53,6 +53,12 @@ def test_a_score_reads_as_a_warning_never_a_buy():
     assert "MUA" not in text
 
 
+def test_a_model_risk_is_named_as_the_model_s():
+    sc = SCORE | {"risk": {"pct": 0.58, "basis": "mô hình rủi ro", "n": 900, "model": True}}
+    text = format_score(sc)
+    assert "Xác suất bẫy (mô hình): 58%" in text and "lịch sử" not in text and "MUA" not in text
+
+
 def test_the_owner_asks_by_mint_and_gets_the_score():
     bot, http = _bot()
     asyncio.run(bot.handle(f"/score {MINT}"))
